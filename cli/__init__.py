@@ -7,11 +7,12 @@ from .train import Train
 from .evaluate import Evaluate
 from .search import Search
 from .annotate import Annotate
+from .easy_predict import EasyPredict
 
 @dataclass
 class CLI:
 
-    command: T.Union[CreateDataset, Predict, Train, Evaluate, CreateDatasetSpecies, Search, Annotate]
+    command: T.Union[CreateDataset, Predict, Train, Evaluate, CreateDatasetSpecies, Search, Annotate, EasyPredict]
 
     def run(self):
         self.command.run()
