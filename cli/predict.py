@@ -38,7 +38,7 @@ def eve_filter(predictions, dataset, align, train_csv):
 def main(args):
     tokenizer, model = retrieve_model(args.model, args.peft)
     dataset = construct_dataset(args.data, tokenizer, train=False)
-    trainer = retrieve_trainer(model, tokenizer, dataset)
+    trainer = retrieve_trainer(model, tokenizer, eval_dataset=dataset)
     res = trainer.predict(dataset)
     predictions = np.argmax(res.predictions, axis=1)
     predictions = [(i["ID"], "", constants.ec_to_label[pred]) for (i, pred) in zip(dataset, predictions)]

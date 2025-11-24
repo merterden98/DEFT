@@ -93,7 +93,13 @@ def assign_predictions(aln, dataset, predictions, train_csv):
     aln = aln.sort_values(by=["Bits"], ascending=[False]).groupby("Query").head(1000)
     return aln
 
-def add_ec_data(aln, dataset, predictions, train_csv):
+def add_ec_data(
+    aln,
+    dataset,
+    predictions,
+    train_csv,
+    filter_by_prediction_prefix: bool = True,
+):
     from collections import defaultdict
 
     df = pd.read_csv(train_csv)
@@ -105,7 +111,6 @@ def add_ec_data(aln, dataset, predictions, train_csv):
     aln["EC"] = aln["Target"].apply(lambda x: id_to_ec[x])
     aln["EC_2"] = aln["EC"].apply(lambda x: ".".join(x.split(".")[:2]))
 
-    id_to_ec = dict()
     id_to_true_ec = dict()
 
     # The variables, all_labels, true_labels, and pred_labels are used to calculate the scores for CLEAN comparison
@@ -113,20 +118,23 @@ def add_ec_data(aln, dataset, predictions, train_csv):
     all_labels = set()
     true_labels = []
     pred_labels = []
-    for i, row in enumerate(dataset):
-        id_to_ec[row["ID"]] = predictions[i][2]
+    for row in dataset:
         id_to_true_ec[row["ID"]] = row["EC"]
         for ec in row["EC"].split(";"):
             all_labels.add(ec)
-    aln = aln[aln['Query'].isin(id_to_ec.keys())] # Ensure we are only reporting predicted matches
-    aln["Query_EC2"] = aln["Query"].apply(lambda x: ".".join(id_to_ec[x].split(".")[:2]))
-    aln = aln[aln["EC_2"] == aln["Query_EC2"]]
+    aln = aln[aln["Query"].isin(id_to_true_ec.keys())]
+
+    if filter_by_prediction_prefix and predictions is not None:
+        id_to_pred_ec = {query_id: pred_ec for query_id, _, pred_ec in predictions}
+        aln["Query_EC2"] = aln["Query"].apply(
+            lambda x: ".".join(id_to_pred_ec[x].split(".")[:2]) if x in id_to_pred_ec else ""
+        )
+        aln = aln[aln["EC_2"] == aln["Query_EC2"]]
 
     aln.to_csv("aln.csv", index=False)
     aln = aln.sort_values(by=["Bits"], ascending=[False]).groupby("Query").head(1000)
     aln["True_EC"] = aln["Query"].apply(lambda x: id_to_true_ec[x])
 
-    
     num_correct = 0
     matches = defaultdict(list)
     true_ec = defaultdict(list)
@@ -167,7 +175,6 @@ def add_ec_data(aln, dataset, predictions, train_csv):
     accuracy = num_correct / len(matches)
     accuracy_2 = num_first_two_correct / len(matches)
 
-    
     pre, rec, f1, acc = get_eval_metrics(pred_labels, true_labels, all_labels)
 
     eval_metrics = {
@@ -264,4 +271,3 @@ def retrieve_3di(pdb_path, foldseek="foldseek"):
         )
         _ = proc.communicate()
         return extract_3di_from_db(f"{tmpdir}/{pdb_dir_name}", foldseek=foldseek)
-

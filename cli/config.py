@@ -5,27 +5,18 @@ Update these URLs when you have the files hosted on a server.
 
 # Model file URLs (update these with actual URLs when available)
 MODEL_URLS = {
-    'peft': {
-        'url': 'https://example.com/eve_peft_model.zip',  # Placeholder
-        'filename': 'peft_model.zip',
+    'eve_data': {
+        'url': 'https://zenodo.org/records/16915527/files/EVE_DATA.zip?download=1',
+        'filename': 'EVE_DATA.zip',
         'extract': True,
-        'description': 'PEFT adapter weights'
-    },
-    'train_db': {
-        'url': 'https://example.com/eve_train_db.tar.gz',  # Placeholder
-        'filename': 'train_db.tar.gz',
-        'extract': True,
-        'description': 'Training database for foldseek'
-    },
-    'train_csv': {
-        'url': 'https://example.com/eve_train_csv.csv',  # Placeholder
-        'filename': 'train_csv.csv',
-        'extract': False,
-        'description': 'Training CSV file'
+        'description': 'EVE data archive containing all required files'
     }
 }
 
-
+# File checksums for verification (optional)
+FILE_CHECKSUMS = {
+    'EVE_DATA.zip': None  # No checksum provided, can be added later if needed
+}
 
 # Default cache directory
 DEFAULT_CACHE_DIR = '~/.eve_cache'

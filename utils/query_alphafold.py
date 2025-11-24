@@ -5,8 +5,9 @@ import tempfile
 import uuid
 
 
-
-os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "/hpc/home/me196/projects/EnzymeClassification/dataset_scripts/key.json"
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = (
+    "/hpc/home/me196/projects/EnzymeClassification/dataset_scripts/key.json"
+)
 
 client = bigquery.Client()
 alphafold_db = "bigquery-public-data.deepmind_alphafold"
@@ -15,16 +16,19 @@ TAXON_DOWNLOAD_BUCK = "gs://public-datasets-deepmind-alphafold-v4/proteomes/prot
 
 
 config = bigquery.LoadJobConfig(
-schema=[
-    bigquery.SchemaField("uniprotAccession", "STRING"),
-], write_disposition="WRITE_TRUNCATE")
+    schema=[
+        bigquery.SchemaField("uniprotAccession", "STRING"),
+    ],
+    write_disposition="WRITE_TRUNCATE",
+)
 
-def get_pdb_files(uniprot_ids: list, download_dir : str, tmp_prefix : str, query=None) -> str:
 
+def get_pdb_files(
+    uniprot_ids: list, download_dir: str, tmp_prefix: str, query=None
+) -> str:
     tmp_folder = f"{download_dir}/{tmp_prefix}_{uuid.uuid4()}"
     # Make directory
     os.system(f"mkdir {tmp_folder}")
-
 
     # lstrip query and see if starts with taxonomy_id:
     try:
@@ -32,25 +36,30 @@ def get_pdb_files(uniprot_ids: list, download_dir : str, tmp_prefix : str, query
             if query.lstrip().startswith("taxonomy_id:"):
                 taxonomy_id = query.lstrip().split(":")[1]
                 # Download the proteome using gsutil
-                os.system(f"gsutil -m cp {TAXON_DOWNLOAD_BUCK.format(taxonomy_id=taxonomy_id)} {tmp_folder}")
+                os.system(
+                    f"gsutil -m cp {TAXON_DOWNLOAD_BUCK.format(taxonomy_id=taxonomy_id)} {tmp_folder}"
+                )
                 return tmp_folder
             else:
                 taxonomy_id = query
                 # Download the proteome using gsutil
                 print(tmp_folder)
-                os.system(f"TMPDIR=/tmp/ gsutil -m cp {TAXON_DOWNLOAD_BUCK.format(taxonomy_id=taxonomy_id)} {tmp_folder}/")
-                os.system(f'for i in {tmp_folder}/*.tar; do tar -xf "$i" -C {tmp_folder} ;done')
+                os.system(
+                    f"TMPDIR=/tmp/ gsutil -m cp {TAXON_DOWNLOAD_BUCK.format(taxonomy_id=taxonomy_id)} {tmp_folder}/"
+                )
+                os.system(
+                    f'for i in {tmp_folder}/*.tar; do tar -xf "$i" -C {tmp_folder} ;done'
+                )
                 return tmp_folder
     except:
         print("Could not download proteome, downloading individual files instead")
 
-
     # Upload the list of uniprot_ids to bigquery temporarily
 
     df = pd.DataFrame(uniprot_ids, columns=["uniprotAccession"])
-    job_result = client.load_table_from_dataframe(df, "merden01.uniprot_ids", job_config=config).result()
-
-
+    job_result = client.load_table_from_dataframe(
+        df, "merden01.uniprot_ids", job_config=config
+    ).result()
 
     QUERY = """
 
@@ -85,13 +94,15 @@ def get_pdb_files(uniprot_ids: list, download_dir : str, tmp_prefix : str, query
 
 
 def download_pdb_files(gs_bucket_files: list, output_dir: str) -> None:
-
     f = tempfile.NamedTemporaryFile("w", delete=False)
     # Create a temporary file and write all of the gs_bucket_files
     for file in gs_bucket_files:
         f.write(f"{file}\n")
     f.flush()
     print("Downloading files...", f.name, "...")
-    print(f"cat {f.name} | TMPDIR=/tmp/ gsutil -o \"GSUtil:parallel_process_count=1 -o GSUtil:parallel_thread_count=24\" -m -q cp -I {output_dir}")
-    os.system(f"cat {f.name} | TMPDIR=/tmp/ gsutil -o GSUtil:parallel_process_count=1 -o GSUtil:parallel_thread_count=24 -m -q cp -I {output_dir}")
-
+    print(
+        f'cat {f.name} | TMPDIR=/tmp/ gsutil -o "GSUtil:parallel_process_count=1 -o GSUtil:parallel_thread_count=24" -m -q cp -I {output_dir}'
+    )
+    os.system(
+        f"cat {f.name} | TMPDIR=/tmp/ gsutil -o GSUtil:parallel_process_count=1 -o GSUtil:parallel_thread_count=24 -m -q cp -I {output_dir}"
+    )

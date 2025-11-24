@@ -5,6 +5,7 @@ import urllib.request
 import zipfile
 import tarfile
 import hashlib
+import shutil
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Optional
@@ -28,26 +29,24 @@ class EasyPredict:
         Path(self.cache_dir).mkdir(parents=True, exist_ok=True)
         
         # Define file paths in cache
-        self.model_path = os.path.join(os.getcwd(), "models")
-        self.peft_path = os.path.join(self.cache_dir, "peft_model")
-        self.train_db_path = os.path.join(self.cache_dir, "train_db")
-        self.train_csv_path = os.path.join(self.cache_dir, "train_csv.csv")
+        self.model_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "models") + "/"
+        self.eve_data_path = os.path.join(self.cache_dir, "EVE_DATA")
+        self.peft_path = os.path.join(self.eve_data_path, "clean70_0_model")
+        self.train_db_path = os.path.join(self.eve_data_path, "eve_aln", "clean70_db")
+        self.train_csv_path = os.path.join(self.eve_data_path, "clean70_0_res.csv")
 
-    def download_file(self, file_type: str, local_path: str) -> bool:
-        """Download a file from URL to local path"""
-        if file_type not in MODEL_URLS:
-            print(f"Unknown file type: {file_type}")
-            return False
-            
-        file_info = MODEL_URLS[file_type]
+    def download_eve_data(self) -> bool:
+        """Download and extract EVE_DATA.zip from Zenodo"""
+        file_info = MODEL_URLS['eve_data']
         url = file_info['url']
-        extract = file_info['extract']
+        filename = file_info['filename']
+        local_path = os.path.join(self.cache_dir, filename)
         
         try:
             print(f"Downloading {file_info['description']} from {url}...")
             
             # Create directory if it doesn't exist
-            Path(local_path).parent.mkdir(parents=True, exist_ok=True)
+            Path(self.cache_dir).mkdir(parents=True, exist_ok=True)
             
             # Download file with progress tracking
             def show_progress(block_num, block_size, total_size):
@@ -58,20 +57,15 @@ class EasyPredict:
             urllib.request.urlretrieve(url, local_path, show_progress)
             print()  # New line after progress
             
-            # Extract if needed
-            if extract:
-                print(f"Extracting {local_path}...")
-                if local_path.endswith('.zip'):
-                    with zipfile.ZipFile(local_path, 'r') as zip_ref:
-                        zip_ref.extractall(Path(local_path).parent)
-                elif local_path.endswith('.tar.gz'):
-                    with tarfile.open(local_path, 'r:gz') as tar_ref:
-                        tar_ref.extractall(Path(local_path).parent)
-                
-                # Remove the downloaded archive
-                os.remove(local_path)
+            # Extract the zip file
+            print(f"Extracting {local_path}...")
+            with zipfile.ZipFile(local_path, 'r') as zip_ref:
+                zip_ref.extractall(self.cache_dir)
             
-            print(f"Successfully downloaded and processed {file_info['description']}")
+            # Remove the downloaded archive
+            os.remove(local_path)
+            
+            print(f"Successfully downloaded and extracted {file_info['description']}")
             return True
             
         except Exception as e:
@@ -80,39 +74,35 @@ class EasyPredict:
 
     def ensure_files_exist(self) -> bool:
         """Ensure all required files exist in cache, download if necessary"""
+        # Check if EVE_DATA directory exists
+        if not os.path.exists(self.eve_data_path):
+            print(f"EVE_DATA directory not found at {self.eve_data_path}")
+            print("Downloading EVE_DATA.zip from Zenodo...")
+            if not self.download_eve_data():
+                return False
+        
+        # Check if all required files exist
         files_to_check = [
-            (self.model_path, 'model'),
-            (self.peft_path, 'peft'),
-            (self.train_db_path, 'train_db'),
-            (self.train_csv_path, 'train_csv')
+            (self.peft_path, 'PEFT model'),
+            (self.train_db_path, 'Training database'),
+            (self.train_csv_path, 'Training CSV')
         ]
         
         all_files_exist = True
         
-        for file_path, file_type in files_to_check:
+        for file_path, description in files_to_check:
             if not os.path.exists(file_path):
-                print(f"Required file {file_path} not found in cache.")
+                print(f"Required file {description} not found at {file_path}")
                 all_files_exist = False
-                
-                # Try to download the file
-                if file_type in MODEL_URLS:
-                    print(f"Attempting to download {file_type}...")
-                    if self.download_file(file_type, file_path):
-                        all_files_exist = True
-                    else:
-                        all_files_exist = False
-                else:
-                    print(f"No download URL configured for {file_type}")
-                    all_files_exist = False
         
         if not all_files_exist:
-            print("\nSome required files could not be downloaded.")
-            print("Please manually download the files to:")
-            print(f"  Model: {self.model_path}")
-            print(f"  PEFT: {self.peft_path}")
-            print(f"  Train DB: {self.train_db_path}")
-            print(f"  Train CSV: {self.train_csv_path}")
-            print("\nOr update the URLs in cli/config.py")
+            print("\nSome required files are missing from the EVE_DATA directory.")
+            print("Expected structure:")
+            print(f"  {self.eve_data_path}/")
+            print(f"    ├── clean70_0_model/ (PEFT model)")
+            print(f"    ├── eve_aln/clean70_db/ (Training database)")
+            print(f"    └── clean70_0_res.csv (Training CSV)")
+            print("\nPlease check the downloaded EVE_DATA.zip contents.")
         
         return all_files_exist
 
@@ -124,7 +114,7 @@ class EasyPredict:
         
         # Ensure all required files exist
         if not self.ensure_files_exist():
-            print("Missing required files. Please download them manually or update the URLs.")
+            print("Missing required files. Please check the EVE_DATA.zip download.")
             return None
         
         # Import here to avoid circular imports

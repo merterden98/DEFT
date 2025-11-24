@@ -1,15 +1,19 @@
-import json 
+import json
 import torch
 from dataclasses import dataclass
 from utils.loader import construct_dataset, retrieve_model_training, retrieve_trainer
-from transformers.trainer_utils import TrainOutput
+
+# from transformers.trainer_utils import TrainOutput
 from transformers import BitsAndBytesConfig
 
-import os 
+# import os
 
 import wandb
-from peft import get_peft_config, PeftModel, PeftConfig, get_peft_model, LoraConfig, TaskType
-
+from peft import (
+    get_peft_model,
+    LoraConfig,
+    TaskType,
+)
 
 
 def verify_data_types(model):
@@ -26,13 +30,14 @@ def verify_data_types(model):
     for k, v in dtypes.items():
         print(f"{k}, {v}, {v / total}")
 
+
 @dataclass
 class Train:
-    data : str 
-    data_eval : str
-    save_path : str
-    lr : float = 5e-5
-    epochs : int = 10
+    data: str
+    data_eval: str
+    save_path: str
+    lr: float = 5e-5
+    epochs: int = 10
 
     def run(self):
         main(self)
@@ -40,38 +45,44 @@ class Train:
 
 def main(train: Train):
     quantization_config = BitsAndBytesConfig(
-            load_in_4bit=True,
-            bnb_4bit_quant_type="nf4",
-            bnb_4bit_use_double_quant=True,
-            bnb_4bit_compute_dtype=torch.float16,
-        )
-    tokenizer, model = retrieve_model_training("../models/", quantization_config=quantization_config)
+        load_in_4bit=True,
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_use_double_quant=True,
+        bnb_4bit_compute_dtype=torch.float16,
+    )
+    tokenizer, model = retrieve_model_training(
+        "models/", quantization_config=quantization_config
+    )
+
     peft_config = LoraConfig(
-        inference_mode=False, 
-        r=8, 
-        lora_alpha=32, 
-        target_modules=["query", "key", "value", "dense"], # also try "dense_h_to_4h" and "dense_4h_to_h"
-        # modules_to_save=["classifier"], # also try ["dense"
-        lora_dropout=0.1, 
-        bias="none" # or "all" or "lora_only" 
+        task_type=TaskType.SEQ_CLS,
+        inference_mode=False,
+        r=8,
+        lora_alpha=32,
+        target_modules=['query', 'key', 'value', 'intermediate.dense', 'output.dense'],
+        modules_to_save=["classifier"],  # also try ["dense"
+        lora_dropout=0.1,
+        bias="none",  # or "all" or "lora_only"
     )
 
     model = get_peft_model(model, peft_config)
     verify_data_types(model)
     dataset = construct_dataset(train.data, tokenizer, train=True)
     dataset_eval = construct_dataset(train.data, tokenizer, train=True)
-    wandb.init(project="EVE", 
-               name="test", 
-               entity="merden",
-               job_type="train",
-            config=train.__dict__)
-    trainer = retrieve_trainer(model, tokenizer, dataset, dataset_eval, output_dir=train.save_path)
+    wandb.init(
+        project="EVE",
+        name="test",
+        entity="merden",
+        job_type="train",
+        config=train.__dict__,
+    )
+    trainer = retrieve_trainer(
+        model, tokenizer, dataset, dataset_eval, output_dir=train.save_path
+    )
     trainer_results = trainer.train()
     model.save_pretrained(train.save_path)
     trainer.save_model(train.save_path)
 
     with open(f"{train.save_path}/stats.json", "w") as f:
-    # dump the stats to a file
+        # dump the stats to a file
         json.dump(trainer_results, f)
-
-
