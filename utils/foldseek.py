@@ -1,23 +1,25 @@
 import pandas as pd
 import numpy as np
 from sklearn.preprocessing import MultiLabelBinarizer
-from sklearn.metrics import precision_score, recall_score, \
-    roc_auc_score, accuracy_score, f1_score, average_precision_score
+from sklearn.metrics import (
+    precision_score,
+    recall_score,
+    accuracy_score,
+    f1_score,
+)
 import contextlib
 import tempfile
 import shlex
 import subprocess as sp
 from Bio import SeqIO
 
-def run_foldseek_aln(train_folder, test_folder, output_file):
 
+def run_foldseek_aln(train_folder, test_folder, output_file):
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp_hash = hash(test_folder)
         fseek_base_cmd = f"foldseek easy-search --cov-mode 2 -e 0.1 {test_folder} {train_folder} {output_file} {tmpdir}/aln{tmp_hash}"
         print(fseek_base_cmd)
-        proc = sp.Popen(
-            shlex.split(fseek_base_cmd), stdout=sp.PIPE, stderr=sp.PIPE
-        )
+        proc = sp.Popen(shlex.split(fseek_base_cmd), stdout=sp.PIPE, stderr=sp.PIPE)
         _ = proc.communicate()
         return output_file
 
@@ -25,8 +27,21 @@ def run_foldseek_aln(train_folder, test_folder, output_file):
 def read_aln(path):
     # path contains a tab seperated file with the following columns
     # query,target,fident,alnlen,mismatch,gapopen,qstart,qend,tstart,tend,evalue,bits
-    df = pd.read_csv(path, sep='\t', header=None)
-    df.columns = ["Query", "Target", "Fident", "Alnlen", "Mismatch", "Gapopen", "Qstart", "Qend", "Tstart", "Tend", "Evalue", "Bits"]
+    df = pd.read_csv(path, sep="\t", header=None)
+    df.columns = [
+        "Query",
+        "Target",
+        "Fident",
+        "Alnlen",
+        "Mismatch",
+        "Gapopen",
+        "Qstart",
+        "Qend",
+        "Tstart",
+        "Tend",
+        "Evalue",
+        "Bits",
+    ]
     # for query and target columns, we only need the protein ID
     df["Query"] = df["Query"].apply(lambda x: x.rstrip(".cif").split("_")[0])
     df["Target"] = df["Target"].apply(lambda x: x.rstrip(".cif").split("_")[0])
@@ -38,6 +53,8 @@ def read_aln(path):
     For Purposes of Comparison
 
 """
+
+
 def get_eval_metrics(pred_label, true_label, all_label):
     mlb = MultiLabelBinarizer()
     mlb.fit([list(all_label)])
@@ -48,11 +65,12 @@ def get_eval_metrics(pred_label, true_label, all_label):
     for i in range(n_test):
         pred_m[i] = mlb.transform([pred_label[i]])
         true_m[i] = mlb.transform([true_label[i]])
-    pre = precision_score(true_m, pred_m, average='weighted', zero_division=0)
-    rec = recall_score(true_m, pred_m, average='weighted')
-    f1 = f1_score(true_m, pred_m, average='weighted')
+    pre = precision_score(true_m, pred_m, average="weighted", zero_division=0)
+    rec = recall_score(true_m, pred_m, average="weighted")
+    f1 = f1_score(true_m, pred_m, average="weighted")
     acc = accuracy_score(true_m, pred_m)
     return pre, rec, f1, acc
+
 
 def restrict_aln(aln, predictions, dataset, db_predictions):
     # Convert predictions to a dictionary where the key is the ID and the value is the prediction
@@ -80,6 +98,16 @@ def assign_predictions(aln, dataset, predictions, train_csv):
     for i, row in df.iterrows():
         id_to_ec[row["ID"]] = row["EC"]
         frequencies[row["EC"]] += 1
+
+    missing_mask = ~aln["Target"].isin(id_to_ec.keys())
+    if missing_mask.any():
+        missing_count = int(missing_mask.sum())
+        print(
+            f"Warning: {missing_count} alignment targets are missing EC labels in "
+            f"{train_csv}; dropping those rows."
+        )
+        aln = aln[~missing_mask]
+
     aln["EC"] = aln["Target"].apply(lambda x: id_to_ec[x])
     aln["EC_2"] = aln["EC"].apply(lambda x: ".".join(x.split(".")[:2]))
 
@@ -87,11 +115,13 @@ def assign_predictions(aln, dataset, predictions, train_csv):
     for i, row in enumerate(dataset):
         id_to_ec[row["ID"]] = predictions[i][2]
 
-
-    aln["Query_EC2"] = aln["Query"].apply(lambda x: ".".join(id_to_ec[x].split(".")[:2]) if x in id_to_ec else "")
+    aln["Query_EC2"] = aln["Query"].apply(
+        lambda x: ".".join(id_to_ec[x].split(".")[:2]) if x in id_to_ec else ""
+    )
     aln = aln[aln["EC_2"] == aln["Query_EC2"]]
     aln = aln.sort_values(by=["Bits"], ascending=[False]).groupby("Query").head(1000)
     return aln
+
 
 def add_ec_data(
     aln,
@@ -127,7 +157,9 @@ def add_ec_data(
     if filter_by_prediction_prefix and predictions is not None:
         id_to_pred_ec = {query_id: pred_ec for query_id, _, pred_ec in predictions}
         aln["Query_EC2"] = aln["Query"].apply(
-            lambda x: ".".join(id_to_pred_ec[x].split(".")[:2]) if x in id_to_pred_ec else ""
+            lambda x: ".".join(id_to_pred_ec[x].split(".")[:2])
+            if x in id_to_pred_ec
+            else ""
         )
         aln = aln[aln["EC_2"] == aln["Query_EC2"]]
 
@@ -171,103 +203,83 @@ def add_ec_data(
         pred_labels.append(preds)
         true_labels.append(true_ec[query])
         if not found:
-            incorrect_matches += [(query, matches[query], true_ec[query], f"True EC Freq: {frequencies[true_ec[query][0]]}", f"Predicted EC Freq: {[frequencies[x] for x in matches[query]]}")]
+            incorrect_matches += [
+                (
+                    query,
+                    matches[query],
+                    true_ec[query],
+                    f"True EC Freq: {frequencies[true_ec[query][0]]}",
+                    f"Predicted EC Freq: {[frequencies[x] for x in matches[query]]}",
+                )
+            ]
     accuracy = num_correct / len(matches)
     accuracy_2 = num_first_two_correct / len(matches)
 
     pre, rec, f1, acc = get_eval_metrics(pred_labels, true_labels, all_labels)
 
-    eval_metrics = {
-        "precision": pre,
-        "recall": rec,
-        "f1": f1,
-        "acc": acc
-    }
-    
+    eval_metrics = {"precision": pre, "recall": rec, "f1": f1, "acc": acc}
+
     return aln, accuracy, eval_metrics
 
 
 def extract_3di_from_db(db_path, foldseek="foldseek"):
-        CMD = f"{foldseek} convert2fasta {db_path} {db_path}.fasta"
-        print(CMD)
-        proc = sp.Popen(
-            shlex.split(CMD), stdout=sp.PIPE, stderr=sp.PIPE
-                    )
-        _ = proc.communicate()
+    CMD = f"{foldseek} convert2fasta {db_path} {db_path}.fasta"
+    print(CMD)
+    proc = sp.Popen(shlex.split(CMD), stdout=sp.PIPE, stderr=sp.PIPE)
+    _ = proc.communicate()
 
-        seq_records = SeqIO.to_dict(SeqIO.parse(f"{db_path}.fasta", "fasta"))
-        # Update the keys to only have uniprot id 
-        seq_records = {key.split("_")[0]: value for key, value in seq_records.items()}
-        # create backup of {tmpdir}/{pdb_dir_name}
-        CMD = f"cp {db_path} {db_path}_seq"
-        proc = sp.Popen(
-            shlex.split(CMD), stdout=sp.PIPE, stderr=sp.PIPE
-                    )
-        _ = proc.communicate()
+    seq_records = SeqIO.to_dict(SeqIO.parse(f"{db_path}.fasta", "fasta"))
+    # Update the keys to only have uniprot id
+    seq_records = {key.split("_")[0]: value for key, value in seq_records.items()}
+    # create backup of {tmpdir}/{pdb_dir_name}
+    CMD = f"cp {db_path} {db_path}_seq"
+    proc = sp.Popen(shlex.split(CMD), stdout=sp.PIPE, stderr=sp.PIPE)
+    _ = proc.communicate()
 
-        # create backup of {tmpdir}/{pdb_dir_name}.index
-        CMD = f"cp {db_path}.index {db_path}_seq.index"
-        proc = sp.Popen(
-            shlex.split(CMD), stdout=sp.PIPE, stderr=sp.PIPE
-                    )
-        _ = proc.communicate()
-        CMD = f"mv {db_path}_ss {db_path}"
-        proc = sp.Popen(
-            shlex.split(CMD), stdout=sp.PIPE, stderr=sp.PIPE
-                    )
-        _ = proc.communicate()
-        CMD = f"mv {db_path}_ss.index {db_path}.index"
-        proc = sp.Popen(
-            shlex.split(CMD), stdout=sp.PIPE, stderr=sp.PIPE
-                    )
-        _ = proc.communicate()
-        CMD = f"{foldseek} convert2fasta {db_path} {db_path}_ss.fasta"
-        proc = sp.Popen(
-            shlex.split(CMD), stdout=sp.PIPE, stderr=sp.PIPE
-                    )
-        _ = proc.communicate()
+    # create backup of {tmpdir}/{pdb_dir_name}.index
+    CMD = f"cp {db_path}.index {db_path}_seq.index"
+    proc = sp.Popen(shlex.split(CMD), stdout=sp.PIPE, stderr=sp.PIPE)
+    _ = proc.communicate()
+    CMD = f"mv {db_path}_ss {db_path}"
+    proc = sp.Popen(shlex.split(CMD), stdout=sp.PIPE, stderr=sp.PIPE)
+    _ = proc.communicate()
+    CMD = f"mv {db_path}_ss.index {db_path}.index"
+    proc = sp.Popen(shlex.split(CMD), stdout=sp.PIPE, stderr=sp.PIPE)
+    _ = proc.communicate()
+    CMD = f"{foldseek} convert2fasta {db_path} {db_path}_ss.fasta"
+    proc = sp.Popen(shlex.split(CMD), stdout=sp.PIPE, stderr=sp.PIPE)
+    _ = proc.communicate()
 
-        seq_records_struct = SeqIO.to_dict(SeqIO.parse(f"{db_path}_ss.fasta", "fasta"))
-        # Update the keys to only have uniprot id 
-        seq_records_struct = {key.split("_")[0]: value for key, value in seq_records_struct.items()}
+    seq_records_struct = SeqIO.to_dict(SeqIO.parse(f"{db_path}_ss.fasta", "fasta"))
+    # Update the keys to only have uniprot id
+    seq_records_struct = {
+        key.split("_")[0]: value for key, value in seq_records_struct.items()
+    }
 
+    # Restore the original files
+    CMD = f"mv {db_path} {db_path}_ss"
+    proc = sp.Popen(shlex.split(CMD), stdout=sp.PIPE, stderr=sp.PIPE)
+    _ = proc.communicate()
 
-        # Restore the original files
-        CMD = f"mv {db_path} {db_path}_ss"
-        proc = sp.Popen(
-            shlex.split(CMD), stdout=sp.PIPE, stderr=sp.PIPE
-                    )
-        _ = proc.communicate()
+    CMD = f"mv {db_path}.index {db_path}_ss.index"
+    proc = sp.Popen(shlex.split(CMD), stdout=sp.PIPE, stderr=sp.PIPE)
+    _ = proc.communicate()
 
+    CMD = f"mv {db_path}_seq {db_path}"
+    proc = sp.Popen(shlex.split(CMD), stdout=sp.PIPE, stderr=sp.PIPE)
+    _ = proc.communicate()
 
-        CMD = f"mv {db_path}.index {db_path}_ss.index"
-        proc = sp.Popen(
-            shlex.split(CMD), stdout=sp.PIPE, stderr=sp.PIPE
-                    )
-        _ = proc.communicate()
+    CMD = f"mv {db_path}_seq.index {db_path}.index"
+    proc = sp.Popen(shlex.split(CMD), stdout=sp.PIPE, stderr=sp.PIPE)
+    _ = proc.communicate()
 
-        CMD = f"mv {db_path}_seq {db_path}"
-        proc = sp.Popen(
-            shlex.split(CMD), stdout=sp.PIPE, stderr=sp.PIPE
-                    )
-        _ = proc.communicate()
-
-        CMD = f"mv {db_path}_seq.index {db_path}.index"
-        proc = sp.Popen(
-            shlex.split(CMD), stdout=sp.PIPE, stderr=sp.PIPE
-                    )
-        _ = proc.communicate()
-
-
-        return seq_records, seq_records_struct, db_path
+    return seq_records, seq_records_struct, db_path
 
 
 def retrieve_3di(pdb_path, foldseek="foldseek"):
     pdb_dir_name = hash(pdb_path)
     with contextlib.nullcontext(tempfile.mkdtemp()) as tmpdir:
         FSEEK_BASE_CMD = f"{foldseek} createdb {pdb_path} {tmpdir}/{pdb_dir_name}"
-        proc = sp.Popen(
-            shlex.split(FSEEK_BASE_CMD), stdout=sp.PIPE, stderr=sp.PIPE
-        )
+        proc = sp.Popen(shlex.split(FSEEK_BASE_CMD), stdout=sp.PIPE, stderr=sp.PIPE)
         _ = proc.communicate()
         return extract_3di_from_db(f"{tmpdir}/{pdb_dir_name}", foldseek=foldseek)

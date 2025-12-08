@@ -13,7 +13,7 @@ from datasets import Dataset
 from .constants import LEVEL_2_ECS as LABELS, label_to_ec
 from safetensors.torch import load_file as safe_load_file
 
-# import linear schedule with warmup
+
 from peft import (
     get_peft_model,
     PeftConfig,
@@ -36,9 +36,6 @@ def get_nb_trainable_parameters(model):
         if num_params == 0 and hasattr(param, "ds_numel"):
             num_params = param.ds_numel
 
-        # Due to the design of 4bit linear layers from bitsandbytes
-        # one needs to multiply the number of parameters by 2 to get
-        # the correct number of parameters
         if param.__class__.__name__ == "Params4bit":
             num_params = num_params * 2
 
@@ -134,7 +131,6 @@ def retrieve_model(model_path: str, peft_path):
 
     def _infer_num_labels_from_adapter(adapter_dir: str) -> int | None:
         try:
-            # Prefer top-level adapter weights; fallback to checkpoint subfolder
             cand_files = [
                 os.path.join(adapter_dir, "adapter_model.safetensors"),
                 os.path.join(
@@ -144,7 +140,6 @@ def retrieve_model(model_path: str, peft_path):
             for f in cand_files:
                 if os.path.exists(f):
                     sd = safe_load_file(f)
-                    # Try common key variants
                     for k in sd.keys():
                         if k.endswith(
                             "classifier.modules_to_save.default.out_proj.weight"
@@ -237,9 +232,8 @@ def retrieve_trainer(
 
     training_args = TrainingArguments(
         output_dir=output_dir,
-        report_to=["wandb"],
         logging_steps=100,
-        evaluation_strategy="steps",
+        eval_strategy="steps",
         num_train_epochs=10,
         label_names=["labels"],
         eval_steps=0.1,
@@ -248,7 +242,6 @@ def retrieve_trainer(
         save_total_limit=10,
         fp16=True,
         optim="adafactor",
-        # save every epoch
         save_steps=1,
         lr_scheduler_type=SchedulerType.REDUCE_ON_PLATEAU,
     )
@@ -261,6 +254,5 @@ def retrieve_trainer(
         eval_dataset=eval_dataset,
         data_collator=DataCollatorWithPadding(tokenizer),
         compute_metrics=compute_metrics,
-        # optimizers=(optimizer, lr_scheduler)
     )
     return trainer

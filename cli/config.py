@@ -1,12 +1,11 @@
 MODEL_URLS = {
-    "eve_data": {
-        "url": "https://zenodo.org/records/16915527/files/EVE_DATA.zip?download=1",
-        "filename": "EVE_DATA.zip",
+    "deft": {
+        "url": "https://zenodo.org/records/17858733/files/DEFT.zip?download=1",
+        "filename": "DEFT.zip",
         "extract": True,
-        "description": "EVE data archive containing all required files",
+        "description": "Default data archive containing all required files",
     }
 }
 
 
-# Default cache directory
-DEFAULT_CACHE_DIR = "~/.eve_cache"
+DEFAULT_CACHE_DIR = "~/.deft_cache"

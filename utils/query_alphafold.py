@@ -3,12 +3,28 @@ import os
 import pandas as pd
 import tempfile
 import uuid
+from typing import Optional
 
 
-os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = (
-    "/hpc/home/me196/projects/EnzymeClassification/dataset_scripts/key.json"
-)
+def _get_credentials_path() -> str:
+    creds_path: Optional[str] = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+    if not creds_path:
+        raise RuntimeError(
+            "GOOGLE_APPLICATION_CREDENTIALS is not set.\n"
+            "Set it to the path of your GCP service account JSON key file, e.g.:\n"
+            '  export GOOGLE_APPLICATION_CREDENTIALS="/path/to/key.json"\n'
+            "See the README section on GCP / AlphaFold setup for details."
+        )
+    if not os.path.exists(creds_path):
+        raise RuntimeError(
+            f"GOOGLE_APPLICATION_CREDENTIALS is set to '{creds_path}', "
+            "but that file does not exist.\n"
+            "Make sure the path is correct and readable."
+        )
+    return creds_path
 
+
+_get_credentials_path()
 client = bigquery.Client()
 alphafold_db = "bigquery-public-data.deepmind_alphafold"
 

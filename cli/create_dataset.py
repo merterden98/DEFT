@@ -1,17 +1,14 @@
 import typing as T
-import glob
 import pandas as pd
 from dataclasses import dataclass
 import contextlib
-from simple_parsing import ArgumentParser
-from Bio import SeqIO, SeqRecord, Seq
+from Bio import SeqIO, SeqRecord
 import tempfile
 import subprocess as sp
 import shlex
 from typing import Dict, Tuple
 import sys
 import os
-from simple_parsing import choice, subgroups
 from pathlib import Path
 
 from utils import query_alphafold
@@ -25,7 +22,7 @@ class CreateDataset:
     test_file: T.Optional[str]
     test_ec: T.Optional[str]
     train_db: T.Optional[str]
-    mode: str = choice("train", "test", default="train")
+    mode: str = "train"
 
     def run(self):
         main(self)

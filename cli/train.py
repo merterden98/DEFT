@@ -6,9 +6,6 @@ from utils.loader import construct_dataset, retrieve_model_training, retrieve_tr
 # from transformers.trainer_utils import TrainOutput
 from transformers import BitsAndBytesConfig
 
-# import os
-
-import wandb
 from peft import (
     get_peft_model,
     LoraConfig,
@@ -59,7 +56,7 @@ def main(train: Train):
         inference_mode=False,
         r=8,
         lora_alpha=32,
-        target_modules=['query', 'key', 'value', 'intermediate.dense', 'output.dense'],
+        target_modules=["query", "key", "value", "intermediate.dense", "output.dense"],
         modules_to_save=["classifier"],  # also try ["dense"
         lora_dropout=0.1,
         bias="none",  # or "all" or "lora_only"
@@ -69,13 +66,6 @@ def main(train: Train):
     verify_data_types(model)
     dataset = construct_dataset(train.data, tokenizer, train=True)
     dataset_eval = construct_dataset(train.data, tokenizer, train=True)
-    wandb.init(
-        project="EVE",
-        name="test",
-        entity="merden",
-        job_type="train",
-        config=train.__dict__,
-    )
     trainer = retrieve_trainer(
         model, tokenizer, dataset, dataset_eval, output_dir=train.save_path
     )
