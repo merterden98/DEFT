@@ -188,3 +188,7 @@ If you get errors about missing model files:
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Funding & Acknowledgements
+
+This work was supported in part by a grant from the Army Research Office (ARO 80093-CH-MUR) (to K.L. and D.K.) and the Karol Family Professorship (to K.L.). We thank the Ribbeck lab for the purified mucin. 
