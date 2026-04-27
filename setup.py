@@ -31,17 +31,18 @@ setup(
     python_requires=">=3.8",
     install_requires=[
         "torch>=1.9.0",
-        "transformers>=4.20.0",
+        "transformers>=4.40,<5",
         "pandas>=1.3.0",
-        "numpy>=1.21.0",
+        "numpy>=1.24,<2",
         "datasets>=2.0.0",
         "evaluate>=0.3.0",
         "accelerate>=0.20.0",
         "peft>=0.4.0",
-        "simple-parsing>=0.1.0",
-        "wandb>=0.13.0",
         "biopython>=1.79",
         "scikit-learn>=1.0.0",
+        "bitsandbytes>=0.39.0",
+        "galore-torch>=0.1.0",
+        "typer[all]>=0.12.0",
     ],
     extras_require={
         "dev": [

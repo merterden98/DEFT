@@ -1,124 +1,147 @@
-from google.cloud import bigquery
+"""Download AlphaFold structures without any GCP / gsutil / BigQuery setup.
+
+Two access paths are supported:
+
+1. **By taxonomy / species ID** — used by `create-dataset-species` and
+   `easy-predict`. AlphaFold proteome tarballs are mirrored on the EBI
+   FTP site at `https://ftp.ebi.ac.uk/pub/databases/alphafold/latest/`
+   under names like `UP000002438_208964_PSEAE_v6.tar`. We scrape the
+   directory listing to find the tarball matching a taxonomy ID and
+   stream it over HTTPS.
+
+2. **By UniProt accession list** — used by `create-dataset --file`. Each
+   accession resolves to a CIF via the EBI AlphaFold prediction API
+   (`https://alphafold.ebi.ac.uk/api/prediction/{uniprot}`), which returns
+   a versioned `cifUrl`. No auth, no BigQuery join, no `gsutil`.
+"""
+
+from __future__ import annotations
+
+import json
 import os
-import pandas as pd
-import tempfile
+import re
+import sys
+import tarfile
+import urllib.error
+import urllib.parse
+import urllib.request
 import uuid
-from typing import Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
+from typing import Iterable, List, Optional
 
 
-def _get_credentials_path() -> str:
-    creds_path: Optional[str] = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
-    if not creds_path:
-        raise RuntimeError(
-            "GOOGLE_APPLICATION_CREDENTIALS is not set.\n"
-            "Set it to the path of your GCP service account JSON key file, e.g.:\n"
-            '  export GOOGLE_APPLICATION_CREDENTIALS="/path/to/key.json"\n'
-            "See the README section on GCP / AlphaFold setup for details."
-        )
-    if not os.path.exists(creds_path):
-        raise RuntimeError(
-            f"GOOGLE_APPLICATION_CREDENTIALS is set to '{creds_path}', "
-            "but that file does not exist.\n"
-            "Make sure the path is correct and readable."
-        )
-    return creds_path
+EBI_PROTEOMES_DIR = "https://ftp.ebi.ac.uk/pub/databases/alphafold/latest/"
+EBI_PREDICTION_API = "https://alphafold.ebi.ac.uk/api/prediction/{uniprot}"
 
-
-_get_credentials_path()
-client = bigquery.Client()
-alphafold_db = "bigquery-public-data.deepmind_alphafold"
-
-TAXON_DOWNLOAD_BUCK = "gs://public-datasets-deepmind-alphafold-v4/proteomes/proteome-tax_id-{taxonomy_id}-*_v4.tar"
-
-
-config = bigquery.LoadJobConfig(
-    schema=[
-        bigquery.SchemaField("uniprotAccession", "STRING"),
-    ],
-    write_disposition="WRITE_TRUNCATE",
-)
+DEFAULT_WORKERS = 16
 
 
 def get_pdb_files(
-    uniprot_ids: list, download_dir: str, tmp_prefix: str, query=None
+    uniprot_ids: list,
+    download_dir: str,
+    tmp_prefix: str,
+    query: Optional[str] = None,
 ) -> str:
-    tmp_folder = f"{download_dir}/{tmp_prefix}_{uuid.uuid4()}"
-    # Make directory
-    os.system(f"mkdir {tmp_folder}")
+    """Download AlphaFold structures into a fresh subdirectory and return its path.
 
-    # lstrip query and see if starts with taxonomy_id:
-    try:
-        if query:
-            if query.lstrip().startswith("taxonomy_id:"):
-                taxonomy_id = query.lstrip().split(":")[1]
-                # Download the proteome using gsutil
-                os.system(
-                    f"gsutil -m cp {TAXON_DOWNLOAD_BUCK.format(taxonomy_id=taxonomy_id)} {tmp_folder}"
-                )
-                return tmp_folder
-            else:
-                taxonomy_id = query
-                # Download the proteome using gsutil
-                print(tmp_folder)
-                os.system(
-                    f"TMPDIR=/tmp/ gsutil -m cp {TAXON_DOWNLOAD_BUCK.format(taxonomy_id=taxonomy_id)} {tmp_folder}/"
-                )
-                os.system(
-                    f'for i in {tmp_folder}/*.tar; do tar -xf "$i" -C {tmp_folder} ;done'
-                )
-                return tmp_folder
-    except:
-        print("Could not download proteome, downloading individual files instead")
-
-    # Upload the list of uniprot_ids to bigquery temporarily
-
-    df = pd.DataFrame(uniprot_ids, columns=["uniprotAccession"])
-    job_result = client.load_table_from_dataframe(
-        df, "merden01.uniprot_ids", job_config=config
-    ).result()
-
-    QUERY = """
-
-    WITH file_rows AS (
-        WITH file_cols AS (
-            SELECT
-                CONCAT(entryID, '-model_v4.cif') as m,
-                CONCAT(entryID, '-predicted_aligned_error_v4.json') as p
-            FROM bigquery-public-data.deepmind_alphafold.metadata as g
-            INNER JOIN `mucin-407221.merden01.uniprot_ids` as b ON g.uniprotAccession = b.uniprotAccession
-        )
-        SELECT * FROM file_cols UNPIVOT (files FOR filetype IN (m, p))
-    )
-    SELECT CONCAT('gs://public-datasets-deepmind-alphafold-v4/', files) AS files
-    FROM file_rows
-
-
+    If `query` is provided, it's treated as a taxonomy ID and the matching
+    proteome tarballs are pulled from the public AlphaFold bucket. Otherwise
+    `uniprot_ids` is used and each accession is fetched individually from EBI.
     """
+    tmp_folder = Path(download_dir) / f"{tmp_prefix}_{uuid.uuid4()}"
+    tmp_folder.mkdir(parents=True, exist_ok=True)
 
-    query_job = client.query(QUERY)
-    results = query_job.result()
-    gs_bucket_files = [row.files for row in results if row.files.endswith(".cif")]
-    print("Length of unique files", len(set(gs_bucket_files)))
-    print("Downloading Files to tmp folder", tmp_folder, "...")
+    if query:
+        taxonomy_id = query.lstrip()
+        if taxonomy_id.startswith("taxonomy_id:"):
+            taxonomy_id = taxonomy_id.split(":", 1)[1]
+        _download_proteome(taxonomy_id, tmp_folder)
+        return str(tmp_folder)
+
+    if uniprot_ids:
+        _download_uniprot_list(uniprot_ids, tmp_folder)
+    return str(tmp_folder)
+
+
+def _download_proteome(taxonomy_id: str, tmp_folder: Path) -> None:
+    print(f"Looking up EBI proteome tarball for taxonomy_id={taxonomy_id}...")
+    tar_name = _find_proteome_tar(taxonomy_id)
+    if tar_name is None:
+        raise RuntimeError(
+            f"No AlphaFold proteome tarball found for taxonomy_id={taxonomy_id} "
+            f"at {EBI_PROTEOMES_DIR}. Verify the ID at https://alphafold.ebi.ac.uk/."
+        )
+    url = EBI_PROTEOMES_DIR + tar_name
+    local_tar = tmp_folder / tar_name
+    print(f"Downloading {tar_name} -> {tmp_folder}...")
+    _http_download(url, local_tar)
+    print(f"Extracting {local_tar.name}")
+    with tarfile.open(local_tar) as tf:
+        tf.extractall(tmp_folder)
+    local_tar.unlink()
+
+
+_PROTEOME_RE = re.compile(
+    r'href="(UP\d+_{tax_id}_[A-Z0-9]+_v(\d+)\.tar)"'
+)
+
+
+def _find_proteome_tar(taxonomy_id: str) -> Optional[str]:
+    """Pick the highest-version `UP*_{taxonomy_id}_*_vN.tar` from the EBI listing."""
+    with urllib.request.urlopen(EBI_PROTEOMES_DIR) as resp:
+        html = resp.read().decode("utf-8", errors="replace")
+    pattern = re.compile(
+        rf'href="(UP\d+_{re.escape(taxonomy_id)}_[A-Z0-9]+_v(\d+)\.tar)"'
+    )
+    candidates = [(int(m.group(2)), m.group(1)) for m in pattern.finditer(html)]
+    if not candidates:
+        return None
+    candidates.sort(reverse=True)
+    return candidates[0][1]
+
+
+def _download_uniprot_list(uniprot_ids: Iterable[str], tmp_folder: Path) -> None:
+    ids: List[str] = [u.strip() for u in uniprot_ids if u.strip()]
+    print(f"Downloading {len(ids)} AlphaFold structures from EBI to {tmp_folder}...")
+    missing = 0
+    with ThreadPoolExecutor(max_workers=DEFAULT_WORKERS) as pool:
+        futures = {
+            pool.submit(_fetch_one, uid, tmp_folder): uid for uid in ids
+        }
+        for fut in as_completed(futures):
+            if not fut.result():
+                missing += 1
+    if missing:
+        print(f"Warning: {missing} of {len(ids)} structures could not be fetched.", file=sys.stderr)
+
+
+def _fetch_one(uniprot_id: str, tmp_folder: Path) -> bool:
+    api_url = EBI_PREDICTION_API.format(uniprot=uniprot_id)
     try:
-        # Download files
-        download_pdb_files(gs_bucket_files, tmp_folder)
-    except OSError as e:
-        print("OsError", e)
+        with urllib.request.urlopen(api_url) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+        if not payload:
+            return False
+        cif_url = payload[0].get("cifUrl")
+        if not cif_url:
+            return False
+        out = tmp_folder / Path(urllib.parse.urlparse(cif_url).path).name
+        _http_download(cif_url, out)
+        return True
+    except urllib.error.HTTPError as e:
+        if e.code in (404, 422):
+            return False
+        raise
 
-    return tmp_folder
 
-
-def download_pdb_files(gs_bucket_files: list, output_dir: str) -> None:
-    f = tempfile.NamedTemporaryFile("w", delete=False)
-    # Create a temporary file and write all of the gs_bucket_files
-    for file in gs_bucket_files:
-        f.write(f"{file}\n")
-    f.flush()
-    print("Downloading files...", f.name, "...")
-    print(
-        f'cat {f.name} | TMPDIR=/tmp/ gsutil -o "GSUtil:parallel_process_count=1 -o GSUtil:parallel_thread_count=24" -m -q cp -I {output_dir}'
-    )
-    os.system(
-        f"cat {f.name} | TMPDIR=/tmp/ gsutil -o GSUtil:parallel_process_count=1 -o GSUtil:parallel_thread_count=24 -m -q cp -I {output_dir}"
-    )
+def _http_download(url: str, dest: Path, chunk_size: int = 1 << 20) -> None:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp_dest = dest.with_suffix(dest.suffix + ".part")
+    with urllib.request.urlopen(url) as resp, open(tmp_dest, "wb") as f:
+        while True:
+            chunk = resp.read(chunk_size)
+            if not chunk:
+                break
+            f.write(chunk)
+    os.replace(tmp_dest, dest)

@@ -2,12 +2,17 @@
 
 DEFT is a tool for enzyme classification using protein language models and structural similarity search.
 
+> **No GCP required.** AlphaFold structures are pulled over plain HTTPS from
+> the public AlphaFold bucket and the EBI AlphaFold endpoint. Earlier
+> versions of DEFT required a GCP service-account key and `gsutil`; that's
+> no longer the case.
+
 ## Installation
 
 ### Install from source
 ```bash
 git clone <repository-url>
-cd EVE
+cd DEFT
 micromamba create -n deft python==3.10
 micromamba activate deft
 pip install -r requirements.txt
@@ -15,180 +20,185 @@ micromamba install -c conda-forge -c bioconda foldseek
 pip install -e .
 ```
 
-
-
-## GCP / AlphaFold Setup
-
-Some commands (such as dataset creation from AlphaFold) download structures from Google Cloud.
-To enable this, you must configure:
-
-- A **GCP service account JSON key** with access to the AlphaFold public bucket and BigQuery.
-- The `GOOGLE_APPLICATION_CREDENTIALS` environment variable pointing to that key.
-- The `gsutil` CLI tool (installed via the Google Cloud SDK).
-
-### 1. Install Google Cloud SDK / gsutil
-
-[Follow the official Google Cloud SDK installation instructions for your platform.](https://docs.cloud.google.com/sdk/docs/install-sdk)
-After installation, verify that `gsutil` is available:
-
-```bash
-gsutil version
-```
-
-### 2. Create a service account and key
-
-1. In the GCP Console, go to **IAM & Admin → Service Accounts**.
-2. Create a service account (or reuse an existing one) and grant it at least
-   storage read access to the AlphaFold bucket and BigQuery read access.
-3. Create a **JSON key** for this service account and download it to a secure location.
-
-### 3. Set GOOGLE_APPLICATION_CREDENTIALS
-
-Point `GOOGLE_APPLICATION_CREDENTIALS` to your JSON key file, for example:
-
-```bash
-export GOOGLE_APPLICATION_CREDENTIALS="/path/to/service-account.json"
-```
-
-### 4. Check your GCP setup
-
-DEFT provides a small helper command to verify that both credentials and `gsutil`
-are configured correctly:
-
-```bash
-python deft.py gcp-check
-```
-
-This command will:
-
-- Confirm that `GOOGLE_APPLICATION_CREDENTIALS` is set and points to an existing file.
-- Check that `gsutil` is available on your `PATH`.
-
-
-
-
 ## Quick Start
 
-### Downloading DEFT Data
-
-Before running predictions, you need to download the DEFT model weights and data. Use the `download` command:
+The fastest path from a clean clone to predictions:
 
 ```bash
-# Set cache directory (optional, defaults to ~/.deft_cache)
+# Optional — set the cache directory (defaults to ~/.deft_cache)
 export DEFT_CACHE=~/.deft_cache
 
-# Download DEFT data
+# Download model weights and the training database from Zenodo
 python deft.py download
 
-# Force re-download if files already exist
-python deft.py download --force
-
-# Specify a custom cache directory
-python deft.py download --cache-dir /path/to/cache
-```
-
-The `download` command will:
-1. Download DEFT.zip from Zenodo
-2. Extract to the cache directory
-3. Verify all required files are present
-
-### Easy-Predict
-
-The `easy-predict` command provides a simplified workflow that automatically downloads files (if needed) and runs prediction:
-
-```bash
-# Run prediction for a species
+# Run end-to-end prediction for a species (NCBI taxonomy ID)
 python deft.py easy-predict --species-id 208964 --output-dir ./results
 ```
 
-The `easy-predict` command will:
-1. Download and cache the required model files (if not already present)
-2. Create a dataset for the specified species
-3. Run prediction and save results
-
+`easy-predict` will:
+1. Download and cache the required model files (if not already present).
+2. Pull the species' AlphaFold proteome over HTTPS.
+3. Run prediction and save results to `./results/`.
 
 ## Cache Management
 
-Model files are cached in `~/.deft_cache` by default. You can change this by setting the `DEFT_CACHE` environment variable:
+Model files are cached in `~/.deft_cache` by default. Override with `DEFT_CACHE`:
 
 ```bash
 export DEFT_CACHE=/path/to/your/cache
 ```
 
-To clear the cache:
-```bash
-rm -rf ~/.deft_cache
-```
-
+Clear the cache with `rm -rf ~/.deft_cache`.
 
 ## Available Commands
 
-- `download`: Download DEFT model weights and data files
-- `easy-predict`: Simplified prediction with automatic file management
-- `predict`: Manual prediction with full control over paths
-- `create-dataset`: Create dataset from UniProt IDs
-- `create-dataset-species`: Create dataset from NCBI taxonomy ID
-- `train`: Train a new model
-- `evaluate`: Evaluate model performance
-- `search`: Search for similar proteins
-- `annotate`: Annotate proteins with EC numbers
+| Command                  | What it does                                              |
+| ------------------------ | --------------------------------------------------------- |
+| `download`               | Download DEFT model weights and data from Zenodo.         |
+| `easy-predict`           | Download (if needed) + create dataset + predict in one go.|
+| `predict`                | Run prediction on a prepared dataset and alignment.       |
+| `create-dataset`         | Build a dataset from a list of UniProt IDs.               |
+| `create-dataset-species` | Build a dataset for an NCBI taxonomy ID.                  |
+| `train`                  | Fine-tune a model with PEFT/LoRA.                         |
+| `evaluate`               | Score predictions against labelled data.                  |
+| `search`                 | Search a structural database for matches to a query.      |
+| `annotate`               | Annotate a query CIF with EC predictions.                 |
+
+Run `python deft.py <command> --help` for full options on any command.
 
 ## Examples
 
-### Create dataset for a species
+The examples below assume you've run `python deft.py download` first and
+that `$DEFT` points at the extracted bundle:
+
+```bash
+export DEFT=${DEFT_CACHE:-~/.deft_cache}/DEFT
+```
+
+### `download` — fetch model weights and data
+```bash
+python deft.py download
+# or force a fresh download:
+python deft.py download --force
+```
+
+### `easy-predict` — one-shot species prediction
+```bash
+python deft.py easy-predict \
+    --species-id 208964 \
+    --output-dir ./results
+```
+
+### `create-dataset` — build a dataset from a UniProt ID list
+```bash
+# uniprot_list.txt: one accession per line (P00698, P00734, ...)
+python deft.py create-dataset \
+    --file     uniprot_list.txt \
+    --output   ./data/manual \
+    --mode     test \
+    --train-db $DEFT/deft_aln/clean70_db
+# Produces: ./data/manual/uniprot_list_res.csv  (ID, Sequence, 3DI)
+#           ./data/manual/uniprot_list_aln.m8   (foldseek alignment)
+```
+
+### `create-dataset-species` — build a dataset for one taxonomy ID
 ```bash
 python deft.py create-dataset-species \
-    --species 208964 \
-    --output ./data/208964 \
-    --train-db /path/to/train_db
+    --species   208964 \
+    --output    ./data/208964 \
+    --train-db  $DEFT/deft_aln/clean70_db
 ```
 
-### Train a model
+### `predict` — run the model on a prepared dataset
 ```bash
-python deft.py train \
-    --data /path/to/train_data.csv \
-    --save-path ./models/new_model
+python deft.py predict \
+    --data      ./data/manual/uniprot_list_res.csv \
+    --align     ./data/manual/uniprot_list_aln.m8 \
+    --peft      $DEFT/deft_weights \
+    --train-csv $DEFT/base.csv \
+    --out       ./predictions.csv
 ```
 
-### Evaluate model
+### `annotate` — predict EC for a single CIF (or directory of CIFs)
+```bash
+python deft.py annotate \
+    --query ./my_structures/AF-P00698-F1-model_v6.cif \
+    --peft  $DEFT/deft_weights \
+    --out   ./annotations.csv
+# Without --out, predictions print to stdout.
+```
+
+### `search` — find structural neighbours and filter by predicted EC
+```bash
+python deft.py search \
+    --query ./my_structures/AF-P0A6T1-F1-model_v6.cif \
+    --db    $DEFT/deft_aln/clean70_db \
+    --peft  $DEFT/deft_weights \
+    --out   ./hits.csv
+```
+
+### `evaluate` — score predictions against labelled data
+The input CSV must have an `EC` column.
 ```bash
 python deft.py evaluate \
-    --data /path/to/test_data.csv \
-    --align /path/to/alignment.m8 \
-    --peft ./peft_model/ \
-    --train-csv /path/to/train.csv \
-    --out ./evaluation_results.csv
+    --data      ./labelled_test.csv \
+    --align     ./labelled_test_aln.m8 \
+    --peft      $DEFT/deft_weights \
+    --train-csv $DEFT/base.csv \
+    --out       ./evaluation_results.csv
+```
+
+### `train` — fine-tune a new PEFT adapter
+Heavy: needs a GPU and a labelled training CSV (`ID, Sequence, 3DI, EC`).
+```bash
+python deft.py train \
+    --data      ./train.csv \
+    --data-eval ./eval.csv \
+    --save-path ./models/new_adapter
 ```
 
 ## File Formats
 
-### Input CSV Format
-The input CSV should contain the following columns:
-- `ID`: Protein identifier
-- `Sequence`: Amino acid sequence
-- `3DI`: 3D interaction sequence (optional for prediction)
+### Input CSV
+- `ID` — Protein identifier
+- `Sequence` — Amino-acid sequence
+- `3DI` — 3Di structural sequence (optional for prediction; auto-derived from CIFs)
 
-### Output Format
-The prediction output contains:
-- `Query`: Query protein ID
-- `Target`: Target protein ID  
-- `Bits`: Alignment score
-- `EC`: Predicted EC number
+### Prediction output
+- `Query` — Query protein ID
+- `Target` — Target protein ID
+- `Bits` — Foldseek alignment score
+- `EC` — Predicted EC number
 
 ## Troubleshooting
 
-### Missing Model Files
-If you get errors about missing model files:
+### Mixed package versions on shared/HPC machines
 
-1. Check that the URLs in `cli/config.py` are correct
-2. Manually download files to the cache directory
-3. Set the `DEFT_CACHE` environment variable to point to your files
+If `import transformers` (or another dep) loads from `~/.local/lib/...`
+instead of the env, an older user-site install is shadowing the env. Set
+`PYTHONNOUSERSITE=1` for both `pip install` and runtime:
 
+```bash
+export PYTHONNOUSERSITE=1
+```
+
+### Missing model files
+1. Re-run `python deft.py download --force`.
+2. Confirm the URL in `cli/config.py` is reachable.
+3. Set `DEFT_CACHE` to point at an existing extracted `DEFT/` directory.
+
+### AlphaFold download failures
+The species path lists tarballs via the public GCS JSON API and downloads
+them over HTTPS. If listing fails, double-check the taxonomy ID at
+[alphafold.ebi.ac.uk](https://alphafold.ebi.ac.uk/). The UniProt-list path
+fetches each accession from EBI; missing IDs are reported and skipped.
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+MIT — see the LICENSE file.
 
 ## Funding & Acknowledgements
 
-This work was supported in part by a grant from the Army Research Office (ARO 80093-CH-MUR) (to K.L. and D.K.) and the Karol Family Professorship (to K.L.). We thank the Ribbeck lab for the purified mucin. 
+This work was supported in part by a grant from the Army Research Office
+(ARO 80093-CH-MUR) (to K.L. and D.K.) and the Karol Family Professorship
+(to K.L.). We thank the Ribbeck lab for the purified mucin.

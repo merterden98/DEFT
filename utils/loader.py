@@ -230,20 +230,26 @@ def retrieve_trainer(
         preds = predictions.argmax(-1)
         return acc_metric.compute(predictions=preds, references=labels)
 
+    if eval_dataset is not None:
+        eval_kwargs = {
+            "eval_strategy": "steps",
+            "eval_steps": 0.1,
+            "lr_scheduler_type": SchedulerType.REDUCE_ON_PLATEAU,
+        }
+    else:
+        eval_kwargs = {"eval_strategy": "no"}
     training_args = TrainingArguments(
         output_dir=output_dir,
         logging_steps=100,
-        eval_strategy="steps",
         num_train_epochs=10,
         label_names=["labels"],
-        eval_steps=0.1,
         learning_rate=1e-4,
         save_strategy="epoch",
         save_total_limit=10,
         fp16=True,
         optim="adafactor",
         save_steps=1,
-        lr_scheduler_type=SchedulerType.REDUCE_ON_PLATEAU,
+        **eval_kwargs,
     )
 
     trainer = Trainer(

@@ -111,7 +111,7 @@ class EasyPredict:
         create_dataset.run()
 
         print("\nStep 2: Running prediction...")
-        data_file = os.path.join(self.output_dir, f"{self.species_id}.csv")
+        data_file = os.path.join(self.output_dir, f"{self.species_id}_res.csv")
         align_file = os.path.join(self.output_dir, f"{self.species_id}_aln.m8")
         output_file = os.path.join(self.output_dir, f"{self.species_id}_pred.csv")
 

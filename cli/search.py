@@ -18,6 +18,7 @@ class Search:
     db: str
     model: str
     peft: str
+    out: str
 
     def run(self):
         return main(self)
@@ -69,5 +70,5 @@ def main(args):
     ]
 
     aln = eve_filter(predictions, dataset, aln, predictions_db)
-    aln.to_csv("aln_filtered.m8")
+    aln.to_csv(args.out, index=False)
     return aln

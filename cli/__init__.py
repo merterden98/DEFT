@@ -1,6 +1,4 @@
 from typing import Optional
-import os
-import shutil
 
 import typer
 
@@ -8,7 +6,7 @@ import typer
 DEFAULT_MODEL = "westlake-repl/SaProt_650M_AF2"
 
 
-app = typer.Typer(help="DEFT command line interface", rich_markup_mode="ascii")
+app = typer.Typer(help="DEFT command line interface", rich_markup_mode=None)
 
 
 @app.command("create-dataset")
@@ -157,6 +155,11 @@ def train(
         "--save-path",
         help="Directory to save trained model and statistics.",
     ),
+    model: Optional[str] = typer.Option(
+        None,
+        "--model",
+        help="Base model directory or HF identifier (defaults to bundled models/).",
+    ),
     lr: float = typer.Option(
         5e-5,
         "--lr",
@@ -169,12 +172,13 @@ def train(
     ),
 ) -> None:
     """Fine-tune the DEFT model with PEFT on a labelled dataset."""
-    from .train import Train
+    from .train import Train, REPO_MODELS_DIR
 
     args = Train(
         data=data,
         data_eval=data_eval,
         save_path=save_path,
+        model=model or REPO_MODELS_DIR,
         lr=lr,
         epochs=epochs,
     )
@@ -249,17 +253,21 @@ def search(
         "--peft",
         help="Directory containing the PEFT adapter weights.",
     ),
+    out: str = typer.Option(
+        ...,
+        "--out",
+        help="Output CSV file for filtered alignments.",
+    ),
 ) -> None:
     """Search a structural database for matches to a query structure using DEFT predictions."""
     from .search import Search
 
-    model = DEFAULT_MODEL
-
     args = Search(
         query=query,
         db=db,
-        model=model,
+        model=DEFAULT_MODEL,
         peft=peft,
+        out=out,
     )
     args.run()
 
@@ -276,16 +284,20 @@ def annotate(
         "--peft",
         help="Directory containing the PEFT adapter weights.",
     ),
+    out: Optional[str] = typer.Option(
+        None,
+        "--out",
+        help="Optional output CSV path. If unset, predictions are only printed.",
+    ),
 ) -> None:
     """Annotate a query structure with EC predictions using DEFT."""
     from .annotate import Annotate
 
-    model = DEFAULT_MODEL
-
     args = Annotate(
         query=query,
-        model=model,
+        model=DEFAULT_MODEL,
         peft=peft,
+        out=out,
     )
     args.run()
 
@@ -340,38 +352,6 @@ def easy_predict(
         cache_dir=cache_dir,
     )
     args.run()
-
-
-@app.command("gcp-check")
-def gcp_check() -> None:
-    """Check that GOOGLE_APPLICATION_CREDENTIALS and gsutil are correctly configured."""
-    creds = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
-    if not creds:
-        typer.echo(
-            "GOOGLE_APPLICATION_CREDENTIALS is not set.\n"
-            "Set it to the path of your GCP service account JSON key file, e.g.:\n"
-            '  export GOOGLE_APPLICATION_CREDENTIALS="/path/to/key.json"'
-        )
-        raise typer.Exit(code=1)
-
-    if not os.path.exists(creds):
-        typer.echo(
-            f"GOOGLE_APPLICATION_CREDENTIALS is set to '{creds}', "
-            "but that file does not exist.\n"
-            "Make sure the path is correct and readable."
-        )
-        raise typer.Exit(code=1)
-
-    if shutil.which("gsutil") is None:
-        typer.echo(
-            "`gsutil` was not found in your PATH.\n"
-            "Install the Google Cloud SDK and ensure `gsutil` is available, "
-            "then try again.\n"
-            "See the README section on GCP / AlphaFold setup for details."
-        )
-        raise typer.Exit(code=1)
-
-    typer.echo("GCP credentials and gsutil appear to be correctly configured.")
 
 
 __all__ = ["app"]

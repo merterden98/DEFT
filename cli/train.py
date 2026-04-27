@@ -1,10 +1,7 @@
 import json
-import torch
 from dataclasses import dataclass
+from pathlib import Path
 from utils.loader import construct_dataset, retrieve_model_training, retrieve_trainer
-
-# from transformers.trainer_utils import TrainOutput
-from transformers import BitsAndBytesConfig
 
 from peft import (
     get_peft_model,
@@ -13,17 +10,15 @@ from peft import (
 )
 
 
+REPO_MODELS_DIR = str(Path(__file__).resolve().parent.parent / "models")
+
+
 def verify_data_types(model):
-    # Verifying the datatypes.
     dtypes = {}
     for _, p in model.named_parameters():
         dtype = p.dtype
-        if dtype not in dtypes:
-            dtypes[dtype] = 0
-        dtypes[dtype] += p.numel()
-    total = 0
-    for k, v in dtypes.items():
-        total += v
+        dtypes[dtype] = dtypes.get(dtype, 0) + p.numel()
+    total = sum(dtypes.values())
     for k, v in dtypes.items():
         print(f"{k}, {v}, {v / total}")
 
@@ -33,6 +28,7 @@ class Train:
     data: str
     data_eval: str
     save_path: str
+    model: str = REPO_MODELS_DIR
     lr: float = 5e-5
     epochs: int = 10
 
@@ -41,15 +37,7 @@ class Train:
 
 
 def main(train: Train):
-    quantization_config = BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_quant_type="nf4",
-        bnb_4bit_use_double_quant=True,
-        bnb_4bit_compute_dtype=torch.float16,
-    )
-    tokenizer, model = retrieve_model_training(
-        "models/", quantization_config=quantization_config
-    )
+    tokenizer, model = retrieve_model_training(train.model)
 
     peft_config = LoraConfig(
         task_type=TaskType.SEQ_CLS,
@@ -57,15 +45,15 @@ def main(train: Train):
         r=8,
         lora_alpha=32,
         target_modules=["query", "key", "value", "intermediate.dense", "output.dense"],
-        modules_to_save=["classifier"],  # also try ["dense"
+        modules_to_save=["classifier"],
         lora_dropout=0.1,
-        bias="none",  # or "all" or "lora_only"
+        bias="none",
     )
 
     model = get_peft_model(model, peft_config)
     verify_data_types(model)
     dataset = construct_dataset(train.data, tokenizer, train=True)
-    dataset_eval = construct_dataset(train.data, tokenizer, train=True)
+    dataset_eval = construct_dataset(train.data_eval, tokenizer, train=True)
     trainer = retrieve_trainer(
         model, tokenizer, dataset, dataset_eval, output_dir=train.save_path
     )
@@ -74,5 +62,4 @@ def main(train: Train):
     trainer.save_model(train.save_path)
 
     with open(f"{train.save_path}/stats.json", "w") as f:
-        # dump the stats to a file
         json.dump(trainer_results, f)

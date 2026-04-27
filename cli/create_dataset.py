@@ -53,30 +53,38 @@ def run_foldseek(
 ) -> Tuple[Dict[str, SeqRecord.SeqRecord], Dict[str, SeqRecord.SeqRecord], str]:
     pdb_dir_name = hash(folder)
     pdb_dir_name = f"a{pdb_dir_name}"
-    if ec_data is not None:
-        print("Beginning renaming")
-        for root, _, files in os.walk(folder):
-            for file in files:
-                if file.endswith(".cif"):
-                    # Get the uniprot id from the filename
-                    uniprot_id = file.split("-")[1]
-                    # rename the file to have the uniprot id_ec
-                    try:
-                        os.rename(
-                            f"{folder}/{file}",
-                            f"{folder}/{uniprot_id}_{ec_data[uniprot_id]}.cif",
-                        )
-                    except:
-                        pass
-        print("Finished renaming")
-    else:
-        for root, _, files in os.walk(folder):
-            for file in files:
-                if file.endswith(".cif.gz"):
-                    # Get the uniprot id from the filename
-                    uniprot_id = file.split("-")[1]
-                    # rename the file to have the uniprot id_ec
-                    os.rename(f"{folder}/{file}", f"{folder}/{uniprot_id}.cif.gz")
+
+    for root, _, files in os.walk(folder):
+        for fname in files:
+            src = os.path.join(root, fname)
+            if fname.endswith(".cif.gz"):
+                ext = ".cif.gz"
+            elif fname.endswith(".cif"):
+                ext = ".cif"
+            else:
+                # AlphaFold proteome tarballs ship .pdb.gz, confidence JSONs,
+                # and PAE artifacts alongside the CIFs. foldseek picks up any
+                # parseable structure file in the folder, so leaving .pdb.gz
+                # behind doubles every entry. Drop everything that isn't a CIF.
+                try:
+                    os.remove(src)
+                except OSError:
+                    pass
+                continue
+            parts = fname.split("-")
+            if len(parts) < 2:
+                continue
+            uniprot_id = parts[1]
+            if ec_data is not None and uniprot_id in ec_data:
+                new_name = f"{uniprot_id}_{ec_data[uniprot_id]}{ext}"
+            else:
+                new_name = f"{uniprot_id}{ext}"
+            dst = os.path.join(root, new_name)
+            if src != dst:
+                try:
+                    os.rename(src, dst)
+                except OSError:
+                    pass
     with contextlib.nullcontext(tempfile.mkdtemp()) as tmpdir:
         FSEEK_BASE_CMD = f"{foldseek} createdb {folder} {tmpdir}/{pdb_dir_name}"
         proc = sp.Popen(shlex.split(FSEEK_BASE_CMD), stdout=sp.PIPE, stderr=sp.PIPE)
@@ -139,19 +147,8 @@ def run_foldseek(
 
 
 def main_species(args: CreateDatasetSpecies):
-    import os
-
-    tmp_folder = os.environ["TMPDIR"]
-    tmp_folder = Path(args.output)
-    tmp_folder = str(tmp_folder)
-
-    # Check if args.output exists
-    if not os.path.exists(args.output):
-        print(f"Output folder {args.output} does not exist", file=sys.stderr)
-        print(f"Creating output folder {args.output}", file=sys.stderr)
-
-        # recursively create the output folder if it does not exist
-        Path(args.output).mkdir(parents=True, exist_ok=True)
+    Path(args.output).mkdir(parents=True, exist_ok=True)
+    tmp_folder = str(Path(args.output))
 
     name = f"{args.species}"
     tmp_folder_train = query_alphafold.get_pdb_files([], tmp_folder, name, query=name)
@@ -179,17 +176,8 @@ def main(args: CreateDataset):
     with open(args.file, "r") as f:
         uniprot_ids = f.read().splitlines()
 
-    import os
-
-    tmp_folder = os.environ["TMPDIR"]
-
-    # Check if args.output exists
-    if not os.path.exists(args.output):
-        print(f"Output folder {args.output} does not exist", file=sys.stderr)
-        print(f"Creating output folder {args.output}", file=sys.stderr)
-
-        # recursively create the output folder if it does not exist
-        Path(args.output).mkdir(parents=True, exist_ok=True)
+    Path(args.output).mkdir(parents=True, exist_ok=True)
+    tmp_folder = str(Path(args.output))
 
     ec_data = None
     if args.ec:
@@ -197,17 +185,12 @@ def main(args: CreateDataset):
             ec_data = f.read().splitlines()
             ec_data = {line.split("\t")[0]: line.split("\t")[1] for line in ec_data}
 
-        # Check if all uniprot ids are in the ec data
         for uniprot_id in uniprot_ids:
             if uniprot_id not in ec_data:
                 print(
                     f"Uniprot ID {uniprot_id} not found in the EC data", file=sys.stderr
                 )
                 sys.exit(1)
-
-        print("Args output", args.output)
-        tmp_folder = Path(args.output)
-        tmp_folder = str(tmp_folder)
 
     # get filename of args.file
     name = os.path.basename(args.file)
