@@ -170,6 +170,11 @@ def train(
         "--epochs",
         help="Number of training epochs.",
     ),
+    ec_level: int = typer.Option(
+        2,
+        "--ec-level",
+        help="Number of EC digits to train on (2 = first two digits, default; 4 = full EC).",
+    ),
 ) -> None:
     """Fine-tune the DEFT model with PEFT on a labelled dataset."""
     from .train import Train, REPO_MODELS_DIR
@@ -181,6 +186,7 @@ def train(
         model=model or REPO_MODELS_DIR,
         lr=lr,
         epochs=epochs,
+        ec_level=ec_level,
     )
     args.run()
 

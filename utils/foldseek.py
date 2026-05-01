@@ -42,9 +42,20 @@ def read_aln(path):
         "Evalue",
         "Bits",
     ]
-    # for query and target columns, we only need the protein ID
-    df["Query"] = df["Query"].apply(lambda x: x.rstrip(".cif").split("_")[0])
-    df["Target"] = df["Target"].apply(lambda x: x.rstrip(".cif").split("_")[0])
+    # foldseek emits filenames here ("P00001.cif", "P00001.cif.gz", or
+    # "P00001_3.4.11.2.cif" when an EC suffix was injected during dataset
+    # creation). Strip the structure-file suffix and any trailing EC tag so
+    # both Query/Target match the bare UniProt accession used as the dataset
+    # ID — otherwise downstream EC-prefix joins silently drop every row.
+    def _bare_id(x: str) -> str:
+        for suffix in (".cif.gz", ".cif"):
+            if x.endswith(suffix):
+                x = x[: -len(suffix)]
+                break
+        return x.split("_")[0]
+
+    df["Query"] = df["Query"].apply(_bare_id)
+    df["Target"] = df["Target"].apply(_bare_id)
     return df
 
 

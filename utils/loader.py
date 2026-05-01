@@ -56,8 +56,16 @@ def print_trainable_parameters(model):
     )
 
 
+def _truncate_ec(ec: str, ec_level: int) -> str:
+    return ".".join(ec.split(".")[:ec_level])
+
+
 def construct_query(
-    query: str, tokenizer: EsmTokenizer, train: bool = False
+    query: str,
+    tokenizer: EsmTokenizer,
+    train: bool = False,
+    label_to_id: T.Optional[T.Dict[str, int]] = None,
+    ec_level: int = 2,
 ) -> Dataset:
     aa_records, struct_records, path = retrieve_3di(query)
 
@@ -76,6 +84,7 @@ def construct_query(
         raise ValueError(f"File must contain columns {REQUIRED_COLUMNS}")
 
     dataset = Dataset.from_pandas(data)
+    ec_map = label_to_id if label_to_id is not None else label_to_ec
 
     def _process_row(row: T.Dict[str, T.Any]) -> BatchEncoding:
         # create a merged column of sequence and 3DI where 3DI is lower case and interspereced with sequence
@@ -83,8 +92,8 @@ def construct_query(
         di_aa = "".join([f"{aa}{di}" for aa, di in di_aa])
         if train:
             inputs = tokenizer(di_aa, max_length=1024, truncation=True)
-            ec_2 = ".".join(row["EC"].split(".")[:2])
-            return {**inputs, "labels": label_to_ec[ec_2]}
+            ec_key = _truncate_ec(row["EC"], ec_level)
+            return {**inputs, "labels": ec_map[ec_key]}
         return tokenizer(di_aa, padding="max_length", truncation=True, max_length=1024)
 
     dataset = dataset.map(_process_row)
@@ -92,17 +101,39 @@ def construct_query(
 
 
 def construct_dataset(
-    file_path: str, tokenizer: EsmTokenizer, train: bool = False
+    file_path: str,
+    tokenizer: EsmTokenizer,
+    train: bool = False,
+    label_to_id: T.Optional[T.Dict[str, int]] = None,
+    ec_level: int = 2,
 ) -> Dataset:
     data = pd.read_csv(file_path, sep=",")
-    return construct_dataset_from_df(data, tokenizer, train)
+    return construct_dataset_from_df(data, tokenizer, train, label_to_id, ec_level)
 
 
 def construct_dataset_from_df(
-    data: pd.DataFrame, tokenizer: EsmTokenizer, train: bool = False
+    data: pd.DataFrame,
+    tokenizer: EsmTokenizer,
+    train: bool = False,
+    label_to_id: T.Optional[T.Dict[str, int]] = None,
+    ec_level: int = 2,
 ) -> Dataset:
     if not all([col in data.columns for col in REQUIRED_COLUMNS]):
         raise ValueError(f"File must contain columns {REQUIRED_COLUMNS}")
+
+    ec_map = label_to_id if label_to_id is not None else label_to_ec
+
+    if train and "EC" in data.columns:
+        before = len(data)
+        keys = data["EC"].astype(str).map(lambda e: _truncate_ec(e, ec_level))
+        keep = keys.isin(ec_map.keys())
+        dropped = before - int(keep.sum())
+        if dropped:
+            print(
+                f"construct_dataset_from_df: dropping {dropped}/{before} rows "
+                f"with EC labels not in label_to_id (ec_level={ec_level})"
+            )
+        data = data.loc[keep].reset_index(drop=True)
 
     dataset = Dataset.from_pandas(data)
 
@@ -112,8 +143,8 @@ def construct_dataset_from_df(
         di_aa = "".join([f"{aa}{di}" for aa, di in di_aa])
         if train:
             inputs = tokenizer(di_aa, max_length=1024, truncation=True)
-            ec_2 = ".".join(row["EC"].split(".")[:2])
-            return {**inputs, "labels": label_to_ec[ec_2]}
+            ec_key = _truncate_ec(row["EC"], ec_level)
+            return {**inputs, "labels": ec_map[ec_key]}
         return tokenizer(di_aa, padding="max_length", truncation=True, max_length=1024)
 
     dataset = dataset.map(_process_row)
@@ -169,9 +200,11 @@ def retrieve_model(model_path: str, peft_path):
         return tokenizer, peft_model
 
 
-def retrieve_model_training(model_path, quantization_config=None):
+def retrieve_model_training(model_path, quantization_config=None, num_labels=None):
     # Check if model_path is a local directory with model weights
     import os
+
+    n_labels = num_labels if num_labels is not None else len(LABELS)
 
     if os.path.exists(model_path) and os.path.isdir(model_path):
         # Check if model weights exist in the directory
@@ -189,7 +222,7 @@ def retrieve_model_training(model_path, quantization_config=None):
         if has_weights:
             # Use local model
             config = EsmConfig.from_pretrained(model_path)
-            config.num_labels = len(LABELS)
+            config.num_labels = n_labels
             tokenizer = EsmTokenizer.from_pretrained(model_path)
             model: EsmForSequenceClassification = (
                 EsmForSequenceClassification.from_pretrained(model_path, config=config)
@@ -201,7 +234,7 @@ def retrieve_model_training(model_path, quantization_config=None):
             print(
                 f"Model weights not found in {model_path}, using base model: {base_model}"
             )
-            config.num_labels = len(LABELS)
+            config.num_labels = n_labels
             tokenizer = EsmTokenizer.from_pretrained(base_model)
             model: EsmForSequenceClassification = (
                 EsmForSequenceClassification.from_pretrained(base_model, config=config)
@@ -211,7 +244,7 @@ def retrieve_model_training(model_path, quantization_config=None):
         base_model = "westlake-repl/SaProt_650M_AF2"
         print(f"Model path {model_path} not found, using base model: {base_model}")
         config = EsmConfig.from_pretrained(base_model)
-        config.num_labels = len(LABELS)
+        config.num_labels = n_labels
         tokenizer = EsmTokenizer.from_pretrained(base_model)
         model: EsmForSequenceClassification = (
             EsmForSequenceClassification.from_pretrained(base_model, config=config)
@@ -223,6 +256,8 @@ def retrieve_model_training(model_path, quantization_config=None):
 def retrieve_trainer(
     model, tokenizer, train_dataset=None, eval_dataset=None, output_dir="./results"
 ):
+    import inspect
+
     acc_metric = evaluate.load("accuracy")
 
     def compute_metrics(pred):
@@ -230,14 +265,20 @@ def retrieve_trainer(
         preds = predictions.argmax(-1)
         return acc_metric.compute(predictions=preds, references=labels)
 
+    eval_strategy_key = (
+        "eval_strategy"
+        if "eval_strategy" in inspect.signature(TrainingArguments).parameters
+        else "evaluation_strategy"
+    )
+
     if eval_dataset is not None:
         eval_kwargs = {
-            "eval_strategy": "steps",
+            eval_strategy_key: "steps",
             "eval_steps": 0.1,
             "lr_scheduler_type": SchedulerType.REDUCE_ON_PLATEAU,
         }
     else:
-        eval_kwargs = {"eval_strategy": "no"}
+        eval_kwargs = {eval_strategy_key: "no"}
     training_args = TrainingArguments(
         output_dir=output_dir,
         logging_steps=100,

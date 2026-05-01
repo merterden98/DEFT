@@ -156,13 +156,18 @@ def main_species(args: CreateDatasetSpecies):
 
     seq_records, seq_records_struct, traindb_path = run_foldseek(tmp_folder_train, None)
 
+    # foldseek's fasta keys come from the CIF filenames, so they keep the ".cif"
+    # (or ".cif.gz") suffix. read_aln strips that off the alignment Query/Target
+    # columns, so we have to strip it here too — otherwise the EC-prefix join in
+    # foldseek.assign_predictions silently produces zero rows.
     items = []
-    for uniprot_id in seq_records.keys():
+    for raw_id in seq_records.keys():
+        bare_id = raw_id.split(".")[0]
         items.append(
             {
-                "ID": uniprot_id,
-                "Sequence": str(seq_records[uniprot_id].seq),
-                "3DI": str(seq_records_struct[uniprot_id].seq),
+                "ID": bare_id,
+                "Sequence": str(seq_records[raw_id].seq),
+                "3DI": str(seq_records_struct[raw_id].seq),
             }
         )
 
