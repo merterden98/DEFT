@@ -2,18 +2,13 @@
 
 DEFT is a tool for enzyme classification using protein language models and structural similarity search.
 
-> **No GCP required.** AlphaFold structures are pulled over plain HTTPS from
-> the public AlphaFold bucket and the EBI AlphaFold endpoint. Earlier
-> versions of DEFT required a GCP service-account key and `gsutil`; that's
-> no longer the case.
-
 ## Installation
 
 ### Install from source
 ```bash
 git clone <repository-url>
 cd DEFT
-micromamba create -n deft python==3.10
+micromamba create -n deft python==3.10 # users can also use conda/mamba/minimamba instead of micromamba interchangeably.
 micromamba activate deft
 pip install -r requirements.txt
 micromamba install -c conda-forge -c bioconda foldseek
