@@ -1,17 +1,12 @@
 import typing as T
 import pandas as pd
 from dataclasses import dataclass
-import contextlib
-from Bio import SeqIO, SeqRecord
-import tempfile
-import subprocess as sp
-import shlex
-from typing import Dict, Tuple
 import sys
 import os
 from pathlib import Path
 
 from ..utils import query_alphafold
+from ..utils import foldseek
 
 
 @dataclass
@@ -38,22 +33,18 @@ class CreateDatasetSpecies:
         main_species(self)
 
 
-def run_foldseek_aln(train_folder, test_folder, output_file):
-    with tempfile.TemporaryDirectory() as tmpdir:
-        tmp_hash = hash(test_folder)
-        fseek_base_cmd = f"foldseek easy-search --cov-mode 2 -e 0.1 {test_folder} {train_folder} {output_file} {tmpdir}/aln{tmp_hash}"
-        print(fseek_base_cmd)
-        proc = sp.Popen(shlex.split(fseek_base_cmd), stdout=sp.PIPE, stderr=sp.PIPE)
-        _ = proc.communicate()
-        return output_file
+def prepare_structures(folder, ec_data):
+    """Clean an AlphaFold structure folder in place, then extract (aa, 3Di) records.
 
+    AlphaFold proteome tarballs ship .pdb.gz, confidence JSONs, and PAE
+    artifacts alongside the CIFs; foldseek picks up any parseable structure
+    file, so leaving them behind doubles every entry. Drop everything that
+    isn't a CIF and rename each CIF to `<uniprot>[_<ec>].<ext>`, then hand the
+    folder to the foldseek adapter.
 
-def run_foldseek(
-    folder, ec_data, foldseek="foldseek"
-) -> Tuple[Dict[str, SeqRecord.SeqRecord], Dict[str, SeqRecord.SeqRecord], str]:
-    pdb_dir_name = hash(folder)
-    pdb_dir_name = f"a{pdb_dir_name}"
-
+    Returns (aa_records, struct_records, db_path) — the db path is reusable as
+    an alignment target.
+    """
     for root, _, files in os.walk(folder):
         for fname in files:
             src = os.path.join(root, fname)
@@ -62,10 +53,6 @@ def run_foldseek(
             elif fname.endswith(".cif"):
                 ext = ".cif"
             else:
-                # AlphaFold proteome tarballs ship .pdb.gz, confidence JSONs,
-                # and PAE artifacts alongside the CIFs. foldseek picks up any
-                # parseable structure file in the folder, so leaving .pdb.gz
-                # behind doubles every entry. Drop everything that isn't a CIF.
                 try:
                     os.remove(src)
                 except OSError:
@@ -85,65 +72,8 @@ def run_foldseek(
                     os.rename(src, dst)
                 except OSError:
                     pass
-    with contextlib.nullcontext(tempfile.mkdtemp()) as tmpdir:
-        FSEEK_BASE_CMD = f"{foldseek} createdb {folder} {tmpdir}/{pdb_dir_name}"
-        proc = sp.Popen(shlex.split(FSEEK_BASE_CMD), stdout=sp.PIPE, stderr=sp.PIPE)
-        _ = proc.communicate()
 
-        CMD = f"{foldseek} convert2fasta {tmpdir}/{pdb_dir_name} {tmpdir}/{pdb_dir_name}.fasta"
-        proc = sp.Popen(shlex.split(CMD), stdout=sp.PIPE, stderr=sp.PIPE)
-        _ = proc.communicate()
-
-        seq_records = SeqIO.to_dict(
-            SeqIO.parse(f"{tmpdir}/{pdb_dir_name}.fasta", "fasta")
-        )
-        # Update the keys to only have uniprot id
-        seq_records = {key.split("_")[0]: value for key, value in seq_records.items()}
-        # create backup of {tmpdir}/{pdb_dir_name}
-        CMD = f"cp {tmpdir}/{pdb_dir_name} {tmpdir}/{pdb_dir_name}_seq"
-        proc = sp.Popen(shlex.split(CMD), stdout=sp.PIPE, stderr=sp.PIPE)
-        _ = proc.communicate()
-
-        # create backup of {tmpdir}/{pdb_dir_name}.index
-        CMD = f"cp {tmpdir}/{pdb_dir_name}.index {tmpdir}/{pdb_dir_name}_seq.index"
-        proc = sp.Popen(shlex.split(CMD), stdout=sp.PIPE, stderr=sp.PIPE)
-        _ = proc.communicate()
-        CMD = f"mv {tmpdir}/{pdb_dir_name}_ss {tmpdir}/{pdb_dir_name}"
-        proc = sp.Popen(shlex.split(CMD), stdout=sp.PIPE, stderr=sp.PIPE)
-        _ = proc.communicate()
-        CMD = f"mv {tmpdir}/{pdb_dir_name}_ss.index {tmpdir}/{pdb_dir_name}.index"
-        proc = sp.Popen(shlex.split(CMD), stdout=sp.PIPE, stderr=sp.PIPE)
-        _ = proc.communicate()
-        CMD = f"{foldseek} convert2fasta {tmpdir}/{pdb_dir_name} {tmpdir}/{pdb_dir_name}_ss.fasta"
-        proc = sp.Popen(shlex.split(CMD), stdout=sp.PIPE, stderr=sp.PIPE)
-        _ = proc.communicate()
-
-        seq_records_struct = SeqIO.to_dict(
-            SeqIO.parse(f"{tmpdir}/{pdb_dir_name}_ss.fasta", "fasta")
-        )
-        # Update the keys to only have uniprot id
-        seq_records_struct = {
-            key.split("_")[0]: value for key, value in seq_records_struct.items()
-        }
-
-        # Restore the original files
-        CMD = f"mv {tmpdir}/{pdb_dir_name} {tmpdir}/{pdb_dir_name}_ss"
-        proc = sp.Popen(shlex.split(CMD), stdout=sp.PIPE, stderr=sp.PIPE)
-        _ = proc.communicate()
-
-        CMD = f"mv {tmpdir}/{pdb_dir_name}.index {tmpdir}/{pdb_dir_name}_ss.index"
-        proc = sp.Popen(shlex.split(CMD), stdout=sp.PIPE, stderr=sp.PIPE)
-        _ = proc.communicate()
-
-        CMD = f"mv {tmpdir}/{pdb_dir_name}_seq {tmpdir}/{pdb_dir_name}"
-        proc = sp.Popen(shlex.split(CMD), stdout=sp.PIPE, stderr=sp.PIPE)
-        _ = proc.communicate()
-
-        CMD = f"mv {tmpdir}/{pdb_dir_name}_seq.index {tmpdir}/{pdb_dir_name}.index"
-        proc = sp.Popen(shlex.split(CMD), stdout=sp.PIPE, stderr=sp.PIPE)
-        _ = proc.communicate()
-
-        return seq_records, seq_records_struct, f"{tmpdir}/{pdb_dir_name}"
+    return foldseek.retrieve_3di(folder)
 
 
 def main_species(args: CreateDatasetSpecies):
@@ -163,12 +93,14 @@ def main_species(args: CreateDatasetSpecies):
     tmp_folder_train = query_alphafold.get_pdb_files([], tmp_folder, name, query=name)
     print(tmp_folder_train)
 
-    seq_records, seq_records_struct, traindb_path = run_foldseek(tmp_folder_train, None)
+    seq_records, seq_records_struct, traindb_path = prepare_structures(
+        tmp_folder_train, None
+    )
 
     # foldseek's fasta keys come from the CIF filenames, so they keep the ".cif"
     # (or ".cif.gz") suffix. read_aln strips that off the alignment Query/Target
     # columns, so we have to strip it here too — otherwise the EC-prefix join in
-    # foldseek.assign_predictions silently produces zero rows.
+    # alignment.assign_predictions silently produces zero rows.
     items = []
     for raw_id in seq_records.keys():
         bare_id = raw_id.split(".")[0]
@@ -183,7 +115,7 @@ def main_species(args: CreateDatasetSpecies):
     df = pd.DataFrame(items)
     df.to_csv(f"{args.output}/{name}_res.csv", index=False)
 
-    run_foldseek_aln(args.train_db, tmp_folder_train, f"{args.output}/{name}_aln.m8")
+    foldseek.align(tmp_folder_train, args.train_db, f"{args.output}/{name}_aln.m8")
 
 
 def main(args: CreateDataset):
@@ -211,7 +143,7 @@ def main(args: CreateDataset):
     name = name.split(".")[0]
     tmp_folder_train = query_alphafold.get_pdb_files(uniprot_ids, tmp_folder, name)
 
-    seq_records, seq_records_struct, traindb_path = run_foldseek(
+    seq_records, seq_records_struct, traindb_path = prepare_structures(
         tmp_folder_train, ec_data
     )
 
@@ -247,8 +179,8 @@ def main(args: CreateDataset):
 
     if args.mode == "test":
         assert args.train_db is not None, "train_db is required when mode is test"
-        run_foldseek_aln(
-            args.train_db, tmp_folder_train, f"{args.output}/{name}_aln.m8"
+        foldseek.align(
+            tmp_folder_train, args.train_db, f"{args.output}/{name}_aln.m8"
         )
 
     if args.test_ec and args.test_file and args.mode == "train":
@@ -262,7 +194,7 @@ def main(args: CreateDataset):
         tmp_folder_test = query_alphafold.get_pdb_files(
             uniprot_ids, tmp_folder, f"{name}_test"
         )
-        seq_records, seq_records_struct, _ = run_foldseek(tmp_folder_test, ec_data)
+        seq_records, seq_records_struct, _ = prepare_structures(tmp_folder_test, ec_data)
 
         items = []
         missing = 0
@@ -294,4 +226,4 @@ def main(args: CreateDataset):
         df = pd.DataFrame(items)
         df.to_csv(f"{args.output}/{name}_res_test.csv", index=False)
 
-        run_foldseek_aln(traindb_path, tmp_folder_test, f"{args.output}/{name}_aln.m8")
+        foldseek.align(tmp_folder_test, traindb_path, f"{args.output}/{name}_aln.m8")

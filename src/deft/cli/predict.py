@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from ..utils import foldseek
+from ..utils import alignment
 from ..utils.loader import (
     construct_dataset,
     retrieve_model,
@@ -21,8 +21,8 @@ class Predict:
 
 
 def eve_filter(predictions, dataset, align, train_csv):
-    aln = foldseek.read_aln(align)
-    aln = foldseek.assign_predictions(aln, dataset, predictions, train_csv)
+    aln = alignment.read_aln(align)
+    aln = alignment.assign_predictions(aln, dataset, predictions, train_csv)
     return aln
 
 

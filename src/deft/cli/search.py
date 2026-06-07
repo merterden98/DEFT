@@ -2,6 +2,7 @@ import pandas as pd
 import tempfile
 from dataclasses import dataclass
 from ..utils import foldseek
+from ..utils import alignment
 from ..utils.loader import (
     construct_query,
     retrieve_model,
@@ -23,8 +24,8 @@ class Search:
 
 
 def eve_filter(predictions, dataset, align, predictions_db):
-    aln = foldseek.read_aln(align)
-    aln = foldseek.restrict_aln(aln, predictions, dataset, predictions_db)
+    aln = alignment.read_aln(align)
+    aln = alignment.restrict_aln(aln, predictions, dataset, predictions_db)
 
     return aln
 
@@ -50,7 +51,7 @@ def main(args):
 
     # Prealign the query and db: TODO: This can be optimized
     named_temp_file = tempfile.NamedTemporaryFile(delete=False).name
-    aln = foldseek.run_foldseek_aln(args.db, args.query, named_temp_file)
+    aln = foldseek.align(args.query, args.db, named_temp_file)
 
     # One model load, reused across the query and db datasets.
     predictions = predict_ec(model, tokenizer, dataset)

@@ -1,7 +1,7 @@
 import os
 from dataclasses import dataclass
 from transformers import EsmTokenizer
-from ..utils import foldseek
+from ..utils import alignment
 from ..utils.loader import (
     construct_dataset,
     retrieve_model,
@@ -30,8 +30,8 @@ def eve_filter(
     train_csv,
     filter_by_prediction_prefix: bool = True,
 ):
-    aln = foldseek.read_aln(align)
-    aln, accuracy, eval_metrics = foldseek.add_ec_data(
+    aln = alignment.read_aln(align)
+    aln, accuracy, eval_metrics = alignment.add_ec_data(
         aln,
         dataset,
         predictions,
