@@ -24,16 +24,67 @@ The fastest path from a clean clone to predictions:
 export DEFT_CACHE=~/.deft_cache
 
 # Download model weights and the training database from Zenodo
-python deft.py download
+deft download
 
 # Run end-to-end prediction for a species (NCBI taxonomy ID)
-python deft.py easy-predict --species-id 208964 --output-dir ./results
+deft easy-predict --species-id 208964 --output-dir ./results
 ```
 
 `easy-predict` will:
 1. Download and cache the required model files (if not already present).
 2. Pull the species' AlphaFold proteome over HTTPS.
 3. Run prediction and save results to `./results/`.
+
+> Invoke DEFT as `deft <command>` (installed by `pip install -e .`) or, equivalently, `python -m deft <command>`.
+
+## Verify your installation
+
+A self-contained test — **no input files required**. It downloads the
+model bundle, fetches one real enzyme structure from AlphaFold, and predicts
+its EC class.
+
+```bash
+# 1. Download model weights + data from Zenodo (~490 MB, one time)
+deft download
+export DEFT=${DEFT_CACHE:-~/.deft_cache}/DEFT
+
+# 2. Fetch a known enzyme — human carbonic anhydrase 2 (true EC 4.2.1.1)
+curl -L https://alphafold.ebi.ac.uk/files/AF-P00918-F1-model_v6.cif -o P00918.cif
+
+# 3. Predict its EC class
+deft annotate --query P00918.cif --peft $DEFT/deft_weights
+```
+
+DEFT predicts to the first two EC levels, so the expected output is:
+
+```
+P00918	4.2
+```
+
+### Check a panel of enzymes across EC classes
+
+Drop several structures in one directory and annotate them in a single call
+(one model load, all structures predicted together):
+
+```bash
+mkdir -p enzymes
+for acc in P04040 P00558 P00760 P00918; do
+    url=$(curl -s https://alphafold.ebi.ac.uk/api/prediction/$acc \
+          | python -c "import sys,json; print(json.load(sys.stdin)[0]['cifUrl'])")
+    curl -sL "$url" -o enzymes/$acc.cif
+done
+
+deft annotate --query enzymes --peft $DEFT/deft_weights --out preds.csv
+```
+
+Each predicted EC level-2 should match the enzyme's true class:
+
+| Structure | Enzyme                      | True EC   | DEFT |
+| --------- | --------------------------- | --------- | ---- |
+| P04040    | Catalase                    | 1.11.1.6  | 1.11 |
+| P00558    | Phosphoglycerate kinase 1   | 2.7.2.3   | 2.7  |
+| P00760    | Trypsin                     | 3.4.21.4  | 3.4  |
+| P00918    | Carbonic anhydrase 2        | 4.2.1.1   | 4.2  |
 
 ## Cache Management
 
@@ -59,11 +110,11 @@ Clear the cache with `rm -rf ~/.deft_cache`.
 | `search`                 | Search a structural database for matches to a query.      |
 | `annotate`               | Annotate a query CIF with EC predictions.                 |
 
-Run `python deft.py <command> --help` for full options on any command.
+Run `deft <command> --help` for full options on any command.
 
 ## Examples
 
-The examples below assume you've run `python deft.py download` first and
+The examples below assume you've run `deft download` first and
 that `$DEFT` points at the extracted bundle:
 
 ```bash
@@ -72,14 +123,14 @@ export DEFT=${DEFT_CACHE:-~/.deft_cache}/DEFT
 
 ### `download` — fetch model weights and data
 ```bash
-python deft.py download
+deft download
 # or force a fresh download:
-python deft.py download --force
+deft download --force
 ```
 
 ### `easy-predict` — one-shot species prediction
 ```bash
-python deft.py easy-predict \
+deft easy-predict \
     --species-id 208964 \
     --output-dir ./results
 ```
@@ -87,7 +138,7 @@ python deft.py easy-predict \
 ### `create-dataset` — build a dataset from a UniProt ID list
 ```bash
 # uniprot_list.txt: one accession per line (P00698, P00734, ...)
-python deft.py create-dataset \
+deft create-dataset \
     --file     uniprot_list.txt \
     --output   ./data/manual \
     --mode     test \
@@ -98,7 +149,7 @@ python deft.py create-dataset \
 
 ### `create-dataset-species` — build a dataset for one taxonomy ID
 ```bash
-python deft.py create-dataset-species \
+deft create-dataset-species \
     --species   208964 \
     --output    ./data/208964 \
     --train-db  $DEFT/deft_aln/clean70_db
@@ -106,7 +157,7 @@ python deft.py create-dataset-species \
 
 ### `predict` — run the model on a prepared dataset
 ```bash
-python deft.py predict \
+deft predict \
     --data      ./data/manual/uniprot_list_res.csv \
     --align     ./data/manual/uniprot_list_aln.m8 \
     --peft      $DEFT/deft_weights \
@@ -116,7 +167,7 @@ python deft.py predict \
 
 ### `annotate` — predict EC for a single CIF (or directory of CIFs)
 ```bash
-python deft.py annotate \
+deft annotate \
     --query ./my_structures/AF-P00698-F1-model_v6.cif \
     --peft  $DEFT/deft_weights \
     --out   ./annotations.csv
@@ -125,7 +176,7 @@ python deft.py annotate \
 
 ### `search` — find structural neighbours and filter by predicted EC
 ```bash
-python deft.py search \
+deft search \
     --query ./my_structures/AF-P0A6T1-F1-model_v6.cif \
     --db    $DEFT/deft_aln/clean70_db \
     --peft  $DEFT/deft_weights \
@@ -135,7 +186,7 @@ python deft.py search \
 ### `evaluate` — score predictions against labelled data
 The input CSV must have an `EC` column.
 ```bash
-python deft.py evaluate \
+deft evaluate \
     --data      ./labelled_test.csv \
     --align     ./labelled_test_aln.m8 \
     --peft      $DEFT/deft_weights \
@@ -146,7 +197,7 @@ python deft.py evaluate \
 ### `train` — fine-tune a new PEFT adapter
 Heavy: needs a GPU and a labelled training CSV (`ID, Sequence, 3DI, EC`).
 ```bash
-python deft.py train \
+deft train \
     --data      ./train.csv \
     --data-eval ./eval.csv \
     --save-path ./models/new_adapter
@@ -178,7 +229,7 @@ export PYTHONNOUSERSITE=1
 ```
 
 ### Missing model files
-1. Re-run `python deft.py download --force`.
+1. Re-run `deft download --force`.
 2. Confirm the URL in `cli/config.py` is reachable.
 3. Set `DEFT_CACHE` to point at an existing extracted `DEFT/` directory.
 
