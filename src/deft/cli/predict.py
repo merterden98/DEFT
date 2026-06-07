@@ -1,8 +1,8 @@
 import numpy as np
 from dataclasses import dataclass
-from utils import constants
-from utils import foldseek
-from utils.loader import (
+from ..utils import constants
+from ..utils import foldseek
+from ..utils.loader import (
     construct_dataset,
     retrieve_model,
     retrieve_trainer,

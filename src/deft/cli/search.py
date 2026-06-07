@@ -2,9 +2,9 @@ import pandas as pd
 import numpy as np
 import tempfile
 from dataclasses import dataclass
-from utils import constants
-from utils import foldseek
-from utils.loader import (
+from ..utils import constants
+from ..utils import foldseek
+from ..utils.loader import (
     construct_query,
     retrieve_model,
     retrieve_trainer,

@@ -174,7 +174,6 @@ def add_ec_data(
         )
         aln = aln[aln["EC_2"] == aln["Query_EC2"]]
 
-    aln.to_csv("aln.csv", index=False)
     aln = aln.sort_values(by=["Bits"], ascending=[False]).groupby("Query").head(1000)
     aln["True_EC"] = aln["Query"].apply(lambda x: id_to_true_ec[x])
 

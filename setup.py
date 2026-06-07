@@ -10,13 +10,13 @@ if os.path.exists("README.md"):
 setup(
     name="deft-enzyme-classification",
     version="0.1.0",
-    author="Your Name",
-    author_email="your.email@example.com",
-    description="DEFT: Enzyme Classification using Evolutionary Scale Modeling",
+    author="Mert Erden",
+    description="DEFT: Enzyme Classification using Protein Language Models and Structural Similarity Search",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/yourusername/deft-enzyme-classification",
-    packages=find_packages(),
+    url="https://github.com/merterden98/DEFT",
+    package_dir={"": "src"},
+    packages=find_packages(where="src"),
     classifiers=[
         "Development Status :: 3 - Alpha",
         "Intended Audience :: Science/Research",
@@ -54,11 +54,11 @@ setup(
     },
     entry_points={
         "console_scripts": [
-            "deft=deft:main",
+            "deft=deft.__main__:main",
         ],
     },
     include_package_data=True,
     package_data={
-        "": ["*.md", "*.txt", "*.json"],
+        "deft": ["models/*.json", "models/*.txt"],
     },
 )

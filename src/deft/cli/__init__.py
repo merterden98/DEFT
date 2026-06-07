@@ -6,7 +6,7 @@ import typer
 DEFAULT_MODEL = "westlake-repl/SaProt_650M_AF2"
 
 
-app = typer.Typer(help="DEFT command line interface", rich_markup_mode=None)
+app = typer.Typer(help="DEFT command line interface")
 
 
 @app.command("create-dataset")

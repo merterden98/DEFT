@@ -11,7 +11,7 @@ import sys
 import os
 from pathlib import Path
 
-from utils import query_alphafold
+from ..utils import query_alphafold
 
 
 @dataclass
@@ -147,8 +147,17 @@ def run_foldseek(
 
 
 def main_species(args: CreateDatasetSpecies):
-    Path(args.output).mkdir(parents=True, exist_ok=True)
+    import os
+
     tmp_folder = str(Path(args.output))
+
+    # Check if args.output exists
+    if not os.path.exists(args.output):
+        print(f"Output folder {args.output} does not exist", file=sys.stderr)
+        print(f"Creating output folder {args.output}", file=sys.stderr)
+
+        # recursively create the output folder if it does not exist
+        Path(args.output).mkdir(parents=True, exist_ok=True)
 
     name = f"{args.species}"
     tmp_folder_train = query_alphafold.get_pdb_files([], tmp_folder, name, query=name)

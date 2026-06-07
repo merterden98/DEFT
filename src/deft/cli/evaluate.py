@@ -9,9 +9,9 @@ from argparse import ArgumentParser
 from transformers import EsmTokenizer, EsmForSequenceClassification
 from transformers import BatchEncoding
 from transformers import Trainer, TrainingArguments
-from utils import constants
-from utils import foldseek
-from utils.loader import (
+from ..utils import constants
+from ..utils import foldseek
+from ..utils.loader import (
     construct_dataset,
     retrieve_model,
     retrieve_trainer,
