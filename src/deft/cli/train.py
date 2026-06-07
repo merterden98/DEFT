@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from utils.constants import LEVEL_2_ECS, label_to_ec
-from utils.loader import construct_dataset, retrieve_model_training, retrieve_trainer
+from ..utils.constants import LEVEL_2_ECS, label_to_ec
+from ..utils.loader import construct_dataset, retrieve_model_training, retrieve_trainer
 
 from peft import (
     get_peft_model,

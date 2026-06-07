@@ -1,295 +1,94 @@
-import pandas as pd
-import numpy as np
-from sklearn.preprocessing import MultiLabelBinarizer
-from sklearn.metrics import (
-    precision_score,
-    recall_score,
-    accuracy_score,
-    f1_score,
-)
-import contextlib
-import tempfile
+"""Adapter to the foldseek binary.
+
+The single place DEFT shells out to `foldseek`. Every subprocess goes through
+`_run`, which raises on a non-zero exit so failures surface here rather than as
+a confusing missing-file error several layers up. Alignment parsing and EC
+analysis live in `alignment.py`, not here.
+"""
+
 import shlex
 import subprocess as sp
+import tempfile
+
 from Bio import SeqIO
 
+DEFAULT_BINARY = "foldseek"
 
-def run_foldseek_aln(train_folder, test_folder, output_file):
+
+def _run(cmd: str) -> sp.CompletedProcess:
+    """Run a shell command, raising RuntimeError with stderr on failure."""
+    proc = sp.run(shlex.split(cmd), capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"command failed (exit {proc.returncode}): {cmd}\n{proc.stderr}"
+        )
+    return proc
+
+
+def align(
+    query: str,
+    target: str,
+    out_m8: str,
+    *,
+    cov_mode: int = 2,
+    evalue: float = 0.1,
+    foldseek: str = DEFAULT_BINARY,
+) -> str:
+    """Structurally align `query` against `target`, writing alignments to `out_m8`.
+
+    `query` and `target` may each be a directory of structures or a foldseek
+    database. Returns `out_m8`.
+    """
     with tempfile.TemporaryDirectory() as tmpdir:
-        tmp_hash = hash(test_folder)
-        fseek_base_cmd = f"foldseek easy-search --cov-mode 2 -e 0.1 {test_folder} {train_folder} {output_file} {tmpdir}/aln{tmp_hash}"
-        print(fseek_base_cmd)
-        proc = sp.Popen(shlex.split(fseek_base_cmd), stdout=sp.PIPE, stderr=sp.PIPE)
-        _ = proc.communicate()
-        return output_file
-
-
-def read_aln(path):
-    # path contains a tab seperated file with the following columns
-    # query,target,fident,alnlen,mismatch,gapopen,qstart,qend,tstart,tend,evalue,bits
-    df = pd.read_csv(path, sep="\t", header=None)
-    df.columns = [
-        "Query",
-        "Target",
-        "Fident",
-        "Alnlen",
-        "Mismatch",
-        "Gapopen",
-        "Qstart",
-        "Qend",
-        "Tstart",
-        "Tend",
-        "Evalue",
-        "Bits",
-    ]
-    # foldseek emits filenames here ("P00001.cif", "P00001.cif.gz", or
-    # "P00001_3.4.11.2.cif" when an EC suffix was injected during dataset
-    # creation). Strip the structure-file suffix and any trailing EC tag so
-    # both Query/Target match the bare UniProt accession used as the dataset
-    # ID — otherwise downstream EC-prefix joins silently drop every row.
-    def _bare_id(x: str) -> str:
-        for suffix in (".cif.gz", ".cif"):
-            if x.endswith(suffix):
-                x = x[: -len(suffix)]
-                break
-        return x.split("_")[0]
-
-    df["Query"] = df["Query"].apply(_bare_id)
-    df["Target"] = df["Target"].apply(_bare_id)
-    return df
-
-
-"""
-    The Code Below is from CLEAN and used to evaluate the model
-    For Purposes of Comparison
-
-"""
-
-
-def get_eval_metrics(pred_label, true_label, all_label):
-    mlb = MultiLabelBinarizer()
-    mlb.fit([list(all_label)])
-    n_test = len(pred_label)
-    pred_m = np.zeros((n_test, len(mlb.classes_)))
-    true_m = np.zeros((n_test, len(mlb.classes_)))
-
-    for i in range(n_test):
-        pred_m[i] = mlb.transform([pred_label[i]])
-        true_m[i] = mlb.transform([true_label[i]])
-    pre = precision_score(true_m, pred_m, average="weighted", zero_division=0)
-    rec = recall_score(true_m, pred_m, average="weighted")
-    f1 = f1_score(true_m, pred_m, average="weighted")
-    acc = accuracy_score(true_m, pred_m)
-    return pre, rec, f1, acc
-
-
-def restrict_aln(aln, predictions, dataset, db_predictions):
-    # Convert predictions to a dictionary where the key is the ID and the value is the prediction
-
-    id_to_pred = dict()
-    for k, _, v in predictions:
-        id_to_pred[k] = v
-    id_to_db_pred = dict()
-    for k, _, v in db_predictions:
-        id_to_db_pred[k] = v
-
-    # Filter aln if the prediction for the query is the same as the prediction for the target
-    aln["Query_Pred"] = aln["Query"].apply(lambda x: id_to_pred[x])
-    aln["Target_Pred"] = aln["Target"].apply(lambda x: id_to_db_pred[x])
-    aln = aln[aln["Query_Pred"] == aln["Target_Pred"]]
-    return aln
-
-
-def assign_predictions(aln, dataset, predictions, train_csv):
-    from collections import defaultdict
-
-    df = pd.read_csv(train_csv)
-    id_to_ec = dict()
-    frequencies = defaultdict(int)
-    for i, row in df.iterrows():
-        id_to_ec[row["ID"]] = row["EC"]
-        frequencies[row["EC"]] += 1
-
-    missing_mask = ~aln["Target"].isin(id_to_ec.keys())
-    if missing_mask.any():
-        missing_count = int(missing_mask.sum())
-        print(
-            f"Warning: {missing_count} alignment targets are missing EC labels in "
-            f"{train_csv}; dropping those rows."
+        _run(
+            f"{foldseek} easy-search --cov-mode {cov_mode} -e {evalue} "
+            f"{query} {target} {out_m8} {tmpdir}/aln"
         )
-        aln = aln[~missing_mask]
-
-    aln["EC"] = aln["Target"].apply(lambda x: id_to_ec[x])
-    aln["EC_2"] = aln["EC"].apply(lambda x: ".".join(x.split(".")[:2]))
-
-    id_to_ec = dict()
-    for i, row in enumerate(dataset):
-        id_to_ec[row["ID"]] = predictions[i][2]
-
-    aln["Query_EC2"] = aln["Query"].apply(
-        lambda x: ".".join(id_to_ec[x].split(".")[:2]) if x in id_to_ec else ""
-    )
-    aln = aln[aln["EC_2"] == aln["Query_EC2"]]
-    aln = aln.sort_values(by=["Bits"], ascending=[False]).groupby("Query").head(1000)
-    return aln
+    return out_m8
 
 
-def add_ec_data(
-    aln,
-    dataset,
-    predictions,
-    train_csv,
-    filter_by_prediction_prefix: bool = True,
-):
-    from collections import defaultdict
+def extract_3di_from_db(db_path: str, foldseek: str = DEFAULT_BINARY):
+    """Extract (amino-acid, 3Di) SeqRecord dicts from an existing foldseek db.
 
-    df = pd.read_csv(train_csv)
-    id_to_ec = defaultdict(str)
-    frequencies = defaultdict(int)
-    for i, row in df.iterrows():
-        id_to_ec[row["ID"]] = row["EC"]
-        frequencies[row["EC"]] += 1
-    aln["EC"] = aln["Target"].apply(lambda x: id_to_ec[x])
-    aln["EC_2"] = aln["EC"].apply(lambda x: ".".join(x.split(".")[:2]))
+    foldseek keeps the 3Di sequences in a sibling `<db>_ss` database. To read
+    both as FASTA we swap `_ss` into the primary slot, convert, then restore the
+    original layout. Returns (aa_records, struct_records, db_path), each dict
+    keyed by the bare accession.
+    """
 
-    id_to_true_ec = dict()
+    def _records(fasta: str):
+        return {
+            key.split("_")[0]: value
+            for key, value in SeqIO.to_dict(SeqIO.parse(fasta, "fasta")).items()
+        }
 
-    # The variables, all_labels, true_labels, and pred_labels are used to calculate the scores for CLEAN comparison
+    _run(f"{foldseek} convert2fasta {db_path} {db_path}.fasta")
+    seq_records = _records(f"{db_path}.fasta")
 
-    all_labels = set()
-    true_labels = []
-    pred_labels = []
-    for row in dataset:
-        id_to_true_ec[row["ID"]] = row["EC"]
-        for ec in row["EC"].split(";"):
-            all_labels.add(ec)
-    aln = aln[aln["Query"].isin(id_to_true_ec.keys())]
+    # back up the amino-acid db, swap the _ss (3Di) db into place
+    _run(f"cp {db_path} {db_path}_seq")
+    _run(f"cp {db_path}.index {db_path}_seq.index")
+    _run(f"mv {db_path}_ss {db_path}")
+    _run(f"mv {db_path}_ss.index {db_path}.index")
+    _run(f"{foldseek} convert2fasta {db_path} {db_path}_ss.fasta")
+    seq_records_struct = _records(f"{db_path}_ss.fasta")
 
-    if filter_by_prediction_prefix and predictions is not None:
-        id_to_pred_ec = {query_id: pred_ec for query_id, _, pred_ec in predictions}
-        aln["Query_EC2"] = aln["Query"].apply(
-            lambda x: ".".join(id_to_pred_ec[x].split(".")[:2])
-            if x in id_to_pred_ec
-            else ""
-        )
-        aln = aln[aln["EC_2"] == aln["Query_EC2"]]
-
-    aln = aln.sort_values(by=["Bits"], ascending=[False]).groupby("Query").head(1000)
-    aln["True_EC"] = aln["Query"].apply(lambda x: id_to_true_ec[x])
-
-    num_correct = 0
-    matches = defaultdict(list)
-    true_ec = defaultdict(list)
-
-    for row in aln.itertuples():
-        predicted = row.EC.split(";")
-        actual = row.True_EC.split(";")
-        matches[row.Query] += predicted
-        true_ec[row.Query] += actual
-
-    incorrect_matches = []
-    duplicates = 0
-    num_first_two_correct = 0
-    for query in matches:
-        true_ecs = set(true_ec[query])
-        true_ecs_2 = set([".".join(x.split(".")[:2]) for x in true_ecs])
-        found = False
-        match_2_found = False
-        if len(true_ecs) > 1:
-            duplicates += 1
-            continue
-        preds = []
-        for match in matches[query]:
-            if match in all_labels:
-                preds.append(match)
-            match_2 = ".".join(match.split(".")[:2])
-            if match_2 in true_ecs_2 and not match_2_found:
-                num_first_two_correct += 1
-                match_2_found = True
-            if match in true_ecs:
-                num_correct += 1
-                found = True
-                break
-        pred_labels.append(preds)
-        true_labels.append(true_ec[query])
-        if not found:
-            incorrect_matches += [
-                (
-                    query,
-                    matches[query],
-                    true_ec[query],
-                    f"True EC Freq: {frequencies[true_ec[query][0]]}",
-                    f"Predicted EC Freq: {[frequencies[x] for x in matches[query]]}",
-                )
-            ]
-    accuracy = num_correct / len(matches)
-    accuracy_2 = num_first_two_correct / len(matches)
-
-    pre, rec, f1, acc = get_eval_metrics(pred_labels, true_labels, all_labels)
-
-    eval_metrics = {"precision": pre, "recall": rec, "f1": f1, "acc": acc}
-
-    return aln, accuracy, eval_metrics
-
-
-def extract_3di_from_db(db_path, foldseek="foldseek"):
-    CMD = f"{foldseek} convert2fasta {db_path} {db_path}.fasta"
-    print(CMD)
-    proc = sp.Popen(shlex.split(CMD), stdout=sp.PIPE, stderr=sp.PIPE)
-    _ = proc.communicate()
-
-    seq_records = SeqIO.to_dict(SeqIO.parse(f"{db_path}.fasta", "fasta"))
-    # Update the keys to only have uniprot id
-    seq_records = {key.split("_")[0]: value for key, value in seq_records.items()}
-    # create backup of {tmpdir}/{pdb_dir_name}
-    CMD = f"cp {db_path} {db_path}_seq"
-    proc = sp.Popen(shlex.split(CMD), stdout=sp.PIPE, stderr=sp.PIPE)
-    _ = proc.communicate()
-
-    # create backup of {tmpdir}/{pdb_dir_name}.index
-    CMD = f"cp {db_path}.index {db_path}_seq.index"
-    proc = sp.Popen(shlex.split(CMD), stdout=sp.PIPE, stderr=sp.PIPE)
-    _ = proc.communicate()
-    CMD = f"mv {db_path}_ss {db_path}"
-    proc = sp.Popen(shlex.split(CMD), stdout=sp.PIPE, stderr=sp.PIPE)
-    _ = proc.communicate()
-    CMD = f"mv {db_path}_ss.index {db_path}.index"
-    proc = sp.Popen(shlex.split(CMD), stdout=sp.PIPE, stderr=sp.PIPE)
-    _ = proc.communicate()
-    CMD = f"{foldseek} convert2fasta {db_path} {db_path}_ss.fasta"
-    proc = sp.Popen(shlex.split(CMD), stdout=sp.PIPE, stderr=sp.PIPE)
-    _ = proc.communicate()
-
-    seq_records_struct = SeqIO.to_dict(SeqIO.parse(f"{db_path}_ss.fasta", "fasta"))
-    # Update the keys to only have uniprot id
-    seq_records_struct = {
-        key.split("_")[0]: value for key, value in seq_records_struct.items()
-    }
-
-    # Restore the original files
-    CMD = f"mv {db_path} {db_path}_ss"
-    proc = sp.Popen(shlex.split(CMD), stdout=sp.PIPE, stderr=sp.PIPE)
-    _ = proc.communicate()
-
-    CMD = f"mv {db_path}.index {db_path}_ss.index"
-    proc = sp.Popen(shlex.split(CMD), stdout=sp.PIPE, stderr=sp.PIPE)
-    _ = proc.communicate()
-
-    CMD = f"mv {db_path}_seq {db_path}"
-    proc = sp.Popen(shlex.split(CMD), stdout=sp.PIPE, stderr=sp.PIPE)
-    _ = proc.communicate()
-
-    CMD = f"mv {db_path}_seq.index {db_path}.index"
-    proc = sp.Popen(shlex.split(CMD), stdout=sp.PIPE, stderr=sp.PIPE)
-    _ = proc.communicate()
+    # restore the original layout
+    _run(f"mv {db_path} {db_path}_ss")
+    _run(f"mv {db_path}.index {db_path}_ss.index")
+    _run(f"mv {db_path}_seq {db_path}")
+    _run(f"mv {db_path}_seq.index {db_path}.index")
 
     return seq_records, seq_records_struct, db_path
 
 
-def retrieve_3di(pdb_path, foldseek="foldseek"):
-    pdb_dir_name = hash(pdb_path)
-    with contextlib.nullcontext(tempfile.mkdtemp()) as tmpdir:
-        FSEEK_BASE_CMD = f"{foldseek} createdb {pdb_path} {tmpdir}/{pdb_dir_name}"
-        proc = sp.Popen(shlex.split(FSEEK_BASE_CMD), stdout=sp.PIPE, stderr=sp.PIPE)
-        _ = proc.communicate()
-        return extract_3di_from_db(f"{tmpdir}/{pdb_dir_name}", foldseek=foldseek)
+def retrieve_3di(structures: str, foldseek: str = DEFAULT_BINARY):
+    """Build a foldseek db from a CIF file/directory and extract (aa, 3Di) records.
+
+    The scratch db is created under a `mkdtemp` directory that is intentionally
+    left in place: callers reuse the returned db path as an alignment target.
+    """
+    db_name = hash(structures)
+    tmpdir = tempfile.mkdtemp()
+    _run(f"{foldseek} createdb {structures} {tmpdir}/{db_name}")
+    return extract_3di_from_db(f"{tmpdir}/{db_name}", foldseek=foldseek)

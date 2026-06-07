@@ -1,21 +1,11 @@
 import os
-import pandas as pd
-import numpy as np
-import typing as T
-import torch
-import tempfile
 from dataclasses import dataclass
-from argparse import ArgumentParser
-from transformers import EsmTokenizer, EsmForSequenceClassification
-from transformers import BatchEncoding
-from transformers import Trainer, TrainingArguments
-from ..utils import constants
-from ..utils import foldseek
+from transformers import EsmTokenizer
+from ..utils import alignment
 from ..utils.loader import (
     construct_dataset,
     retrieve_model,
-    retrieve_trainer,
-    retrieve_model_training,
+    predict_ec,
 )
 
 
@@ -40,8 +30,8 @@ def eve_filter(
     train_csv,
     filter_by_prediction_prefix: bool = True,
 ):
-    aln = foldseek.read_aln(align)
-    aln, accuracy, eval_metrics = foldseek.add_ec_data(
+    aln = alignment.read_aln(align)
+    aln, accuracy, eval_metrics = alignment.add_ec_data(
         aln,
         dataset,
         predictions,
@@ -71,13 +61,7 @@ def main(args):
 
     predictions = None
     if not skip_filter:
-        trainer = retrieve_trainer(model, tokenizer, dataset)
-        res = trainer.predict(dataset)
-        prediction_labels = np.argmax(res.predictions, axis=1)
-        predictions = [
-            (record["ID"], record["EC"], constants.ec_to_label[label_idx])
-            for record, label_idx in zip(dataset, prediction_labels)
-        ]
+        predictions = predict_ec(model, tokenizer, dataset)
 
     aln, accuracy, eval_metrics = eve_filter(
         predictions,
