@@ -1,13 +1,11 @@
 import pandas as pd
-import numpy as np
 import tempfile
 from dataclasses import dataclass
-from ..utils import constants
 from ..utils import foldseek
 from ..utils.loader import (
     construct_query,
     retrieve_model,
-    retrieve_trainer,
+    predict_ec,
     construct_dataset_from_df,
 )
 
@@ -53,21 +51,10 @@ def main(args):
     # Prealign the query and db: TODO: This can be optimized
     named_temp_file = tempfile.NamedTemporaryFile(delete=False).name
     aln = foldseek.run_foldseek_aln(args.db, args.query, named_temp_file)
-    trainer = retrieve_trainer(model, tokenizer, dataset)
-    res = trainer.predict(dataset)
-    predictions = np.argmax(res.predictions, axis=1)
-    predictions = [
-        (i["ID"], "", constants.ec_to_label[pred])
-        for (i, pred) in zip(dataset, predictions)
-    ]
 
-    # Get predictions for the db
-    res = trainer.predict(dataset_db)
-    predictions_db = np.argmax(res.predictions, axis=1)
-    predictions_db = [
-        (i["ID"], "", constants.ec_to_label[pred])
-        for (i, pred) in zip(dataset_db, predictions_db)
-    ]
+    # One model load, reused across the query and db datasets.
+    predictions = predict_ec(model, tokenizer, dataset)
+    predictions_db = predict_ec(model, tokenizer, dataset_db)
 
     aln = eve_filter(predictions, dataset, aln, predictions_db)
     aln.to_csv(args.out, index=False)

@@ -1,4 +1,5 @@
 import typing as T
+import numpy as np
 import pandas as pd
 import evaluate
 from transformers import EsmTokenizer, EsmForSequenceClassification, EsmConfig
@@ -10,7 +11,7 @@ from transformers import (
     SchedulerType,
 )
 from datasets import Dataset
-from .constants import LEVEL_2_ECS as LABELS, label_to_ec
+from .constants import LEVEL_2_ECS as LABELS, label_to_ec, ec_to_label
 from safetensors.torch import load_file as safe_load_file
 
 
@@ -303,3 +304,21 @@ def retrieve_trainer(
         compute_metrics=compute_metrics,
     )
     return trainer
+
+
+def _decode_ec(logits, dataset) -> T.List[T.Tuple[str, str]]:
+    """Map a batch of class logits to (ID, EC) pairs, aligned with dataset order."""
+    preds = np.argmax(logits, axis=1)
+    return [(row["ID"], ec_to_label[pred]) for row, pred in zip(dataset, preds)]
+
+
+def predict_ec(model, tokenizer, dataset) -> T.List[T.Tuple[str, str]]:
+    """EC prediction: one predicted EC number per dataset ID.
+
+    The shared inference core behind the predict, search, annotate and
+    evaluate commands. Caller owns model retrieval (so a single load can be
+    reused across datasets); this runs the forward pass and decodes the
+    predicted class back to an EC number.
+    """
+    res = retrieve_trainer(model, tokenizer, dataset).predict(dataset)
+    return _decode_ec(res.predictions, dataset)

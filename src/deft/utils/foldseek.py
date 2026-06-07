@@ -87,10 +87,10 @@ def restrict_aln(aln, predictions, dataset, db_predictions):
     # Convert predictions to a dictionary where the key is the ID and the value is the prediction
 
     id_to_pred = dict()
-    for k, _, v in predictions:
+    for k, v in predictions:
         id_to_pred[k] = v
     id_to_db_pred = dict()
-    for k, _, v in db_predictions:
+    for k, v in db_predictions:
         id_to_db_pred[k] = v
 
     # Filter aln if the prediction for the query is the same as the prediction for the target
@@ -124,7 +124,7 @@ def assign_predictions(aln, dataset, predictions, train_csv):
 
     id_to_ec = dict()
     for i, row in enumerate(dataset):
-        id_to_ec[row["ID"]] = predictions[i][2]
+        id_to_ec[row["ID"]] = predictions[i][1]
 
     aln["Query_EC2"] = aln["Query"].apply(
         lambda x: ".".join(id_to_ec[x].split(".")[:2]) if x in id_to_ec else ""
@@ -166,7 +166,7 @@ def add_ec_data(
     aln = aln[aln["Query"].isin(id_to_true_ec.keys())]
 
     if filter_by_prediction_prefix and predictions is not None:
-        id_to_pred_ec = {query_id: pred_ec for query_id, _, pred_ec in predictions}
+        id_to_pred_ec = {query_id: pred_ec for query_id, pred_ec in predictions}
         aln["Query_EC2"] = aln["Query"].apply(
             lambda x: ".".join(id_to_pred_ec[x].split(".")[:2])
             if x in id_to_pred_ec
